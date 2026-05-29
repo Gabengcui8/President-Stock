@@ -18,6 +18,19 @@ def _empty_metrics(reason: str) -> dict[str, object]:
     return {"status": "not_enough_data", "reason": reason}
 
 
+def _max_drawdown(curve: pd.Series) -> float:
+    running_max = curve.cummax()
+    drawdown = curve / running_max - 1
+    return float(drawdown.min())
+
+
+def _annualized_sharpe(returns: pd.Series) -> float | None:
+    std = returns.std()
+    if std == 0 or pd.isna(std):
+        return None
+    return float((returns.mean() / std) * np.sqrt(252))
+
+
 def _signal_metrics(signals: pd.DataFrame, prefix: str) -> dict[str, object]:
     if signals.empty:
         return {
@@ -29,19 +42,29 @@ def _signal_metrics(signals: pd.DataFrame, prefix: str) -> dict[str, object]:
     y_score = signals["prob_up"]
     y_pred = (signals["prob_up"] >= 0.5).astype(int)
     strategy_curve = (1 + signals["strategy_return"]).cumprod()
+    strategy_net_curve = (1 + signals["strategy_return_net"]).cumprod()
     buy_hold_curve = (1 + signals["target_next_return"]).cumprod()
     ann_factor = 252 / max(len(signals), 1)
 
     return {
         f"{prefix}_predictions": int(len(signals)),
         f"{prefix}_active_trades": int((signals["signal"] != 0).sum()),
+        f"{prefix}_exposure": float((signals["signal"] != 0).mean()),
+        f"{prefix}_turnover": float(signals["turnover"].sum()),
         f"{prefix}_accuracy": float(accuracy_score(y_true, y_pred)),
         f"{prefix}_roc_auc": float(roc_auc_score(y_true, y_score)) if y_true.nunique() == 2 else None,
         f"{prefix}_strategy_total_return": float(strategy_curve.iloc[-1] - 1),
+        f"{prefix}_strategy_total_return_net": float(strategy_net_curve.iloc[-1] - 1),
         f"{prefix}_buy_hold_total_return": float(buy_hold_curve.iloc[-1] - 1),
         f"{prefix}_strategy_annualized_return": float(strategy_curve.iloc[-1] ** ann_factor - 1),
+        f"{prefix}_strategy_annualized_return_net": float(strategy_net_curve.iloc[-1] ** ann_factor - 1),
         f"{prefix}_buy_hold_annualized_return": float(buy_hold_curve.iloc[-1] ** ann_factor - 1),
         f"{prefix}_mean_daily_strategy_return": float(signals["strategy_return"].mean()),
+        f"{prefix}_mean_daily_strategy_return_net": float(signals["strategy_return_net"].mean()),
+        f"{prefix}_strategy_sharpe_net": _annualized_sharpe(signals["strategy_return_net"]),
+        f"{prefix}_buy_hold_sharpe": _annualized_sharpe(signals["target_next_return"]),
+        f"{prefix}_strategy_max_drawdown_net": _max_drawdown(strategy_net_curve),
+        f"{prefix}_buy_hold_max_drawdown": _max_drawdown(buy_hold_curve),
     }
 
 
@@ -52,6 +75,7 @@ def train_and_backtest(
     signals_out: str | Path = "outputs/signals.csv",
     metrics_out: str | Path = "outputs/metrics.json",
     min_train_days: int = 252,
+    cost_bps: float = 1.0,
 ) -> dict[str, object]:
     data = build_dataset(spy_path, speeches_path)
     ensure_parent(dataset_out)
@@ -102,6 +126,11 @@ def train_and_backtest(
         )
 
     signals = pd.DataFrame(predictions)
+    if not signals.empty:
+        previous_signal = signals["signal"].shift(1).fillna(0)
+        signals["turnover"] = (signals["signal"] - previous_signal).abs()
+        signals["transaction_cost"] = signals["turnover"] * (cost_bps / 10_000)
+        signals["strategy_return_net"] = signals["strategy_return"] - signals["transaction_cost"]
     ensure_parent(signals_out)
     signals.to_csv(signals_out, index=False)
 
@@ -117,6 +146,7 @@ def train_and_backtest(
             "rows": int(len(data)),
             "first_event_date": str(first_event_date.date()) if pd.notna(first_event_date) else None,
             "signal_thresholds": {"long": 0.55, "short": 0.45},
+            "transaction_cost_bps": cost_bps,
             "features": features,
         }
         metrics.update(_signal_metrics(signals, "all_days"))

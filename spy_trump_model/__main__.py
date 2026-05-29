@@ -47,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--signals-out", default="outputs/signals.csv")
     train.add_argument("--metrics-out", default="outputs/metrics.json")
     train.add_argument("--min-train-days", type=int, default=252)
+    train.add_argument("--cost-bps", type=float, default=1.0)
 
     return parser
 
@@ -89,6 +90,7 @@ def main() -> None:
             signals_out=args.signals_out,
             metrics_out=args.metrics_out,
             min_train_days=args.min_train_days,
+            cost_bps=args.cost_bps,
         )
 
 
