@@ -4,7 +4,7 @@ import argparse
 
 from .data import download_spy
 from .model import train_and_backtest
-from .scrape import fetch_whitehouse_remarks
+from .scrape import fetch_truthsocial_posts, fetch_whitehouse_remarks
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-url",
         default="https://www.whitehouse.gov/videos/?query-inherit-playlist_term=remarks-from-president-trump",
     )
+
+    truth = sub.add_parser("fetch-truthsocial", help="Fetch public Truth Social posts.")
+    truth.add_argument("--handle", default="realDonaldTrump")
+    truth.add_argument("--max-pages", type=int, default=5)
+    truth.add_argument("--limit", type=int, default=40)
+    truth.add_argument("--out", default="data/raw/trump_speeches.csv")
 
     train = sub.add_parser("train", help="Build features, train, and backtest.")
     train.add_argument("--spy", default="data/raw/SPY.csv")
@@ -54,6 +60,13 @@ def main() -> None:
             pages=args.pages,
             out_path=args.out,
             base_url=args.base_url,
+        )
+    elif args.command == "fetch-truthsocial":
+        fetch_truthsocial_posts(
+            handle=args.handle,
+            max_pages=args.max_pages,
+            limit=args.limit,
+            out_path=args.out,
         )
     elif args.command == "train":
         train_and_backtest(
