@@ -76,6 +76,48 @@ def _prepare_horizon(data: pd.DataFrame, horizon_days: int) -> pd.DataFrame:
     return prepared.dropna(subset=["target_return"])
 
 
+def _add_market_volatility(
+    data: pd.DataFrame,
+    data_dir: str | Path,
+    start: str,
+    update: bool,
+    market_ticker: str = "SPY",
+) -> pd.DataFrame:
+    market_path = Path(data_dir) / f"{market_ticker.upper()}.csv"
+    download_spy(ticker=market_ticker.upper(), start=start, cache_path=market_path, update=update)
+    market = pd.read_csv(market_path, parse_dates=["Date"])
+    market = market.rename(columns={col: col.lower() for col in market.columns})
+    market = market.sort_values("date").copy()
+    market["date"] = market["date"].dt.normalize()
+    market["market_return_1d"] = market["close"].pct_change()
+    market["market_vol_20d_lag1"] = market["market_return_1d"].rolling(20).std().shift(1)
+    return data.merge(market[["date", "market_vol_20d_lag1"]], on="date", how="left")
+
+
+def _vol_thresholds(train: pd.DataFrame) -> tuple[float | None, float | None]:
+    vol = train["market_vol_20d_lag1"].dropna()
+    if vol.empty:
+        return None, None
+    low = float(vol.quantile(1 / 3))
+    high = float(vol.quantile(2 / 3))
+    return low, high
+
+
+def _assign_vol_regime(data: pd.DataFrame, low: float | None, high: float | None) -> pd.DataFrame:
+    assigned = data.copy()
+    if low is None or high is None:
+        assigned["vol_regime"] = "unknown"
+        return assigned
+
+    conditions = [
+        assigned["market_vol_20d_lag1"] <= low,
+        assigned["market_vol_20d_lag1"] <= high,
+    ]
+    assigned["vol_regime"] = np.select(conditions, ["low", "medium"], default="high")
+    assigned.loc[assigned["market_vol_20d_lag1"].isna(), "vol_regime"] = "unknown"
+    return assigned
+
+
 def _effect_direction(sample: pd.DataFrame, signal_col: str, return_col: str) -> int | None:
     mask = sample[signal_col] > 0
     events = sample.loc[mask]
@@ -113,6 +155,7 @@ def _keyword_row(
     require_stable_direction: bool,
     allowed_direction: str,
     horizon_days: int,
+    vol_regime: str,
 ) -> dict[str, object]:
     signal_type = "theme" if signal_col.startswith("theme_") else "keyword"
     signal_name = signal_col if signal_type == "theme" else signal_col.removeprefix("kw_")
@@ -183,6 +226,7 @@ def _keyword_row(
         "signal": signal_name,
         "signal_type": signal_type,
         "horizon_days": int(horizon_days),
+        "vol_regime": vol_regime,
         "selected_from_train": bool(enough_train),
         "selected_for_strategy": selected_for_strategy,
         "learned_direction": direction,
@@ -223,6 +267,7 @@ def keyword_impact_report(
     train_fraction: float = 0.7,
     min_keyword_days: int = 20,
     horizon_days: int = 1,
+    horizons: list[int] | None = None,
     min_abs_t_stat: float = 0.0,
     require_stable_direction: bool = True,
     allowed_direction: str = "all",
@@ -233,51 +278,83 @@ def keyword_impact_report(
     out_dir.mkdir(parents=True, exist_ok=True)
     all_rows: list[dict[str, object]] = []
     split_rows: list[dict[str, object]] = []
+    horizon_list = horizons if horizons else [horizon_days]
+    horizon_list = sorted({max(int(value), 1) for value in horizon_list})
 
     for ticker in tickers:
         symbol = ticker.upper()
         price_path = Path(data_dir) / f"{symbol}.csv"
         download_spy(ticker=symbol, start=start, cache_path=price_path, update=update)
-        data = _prepare_horizon(_add_theme_columns(build_dataset(price_path, speeches_path)), horizon_days)
-        train, test, split = _split_by_time(data, split_date, train_fraction)
-        signal_cols = [col for col in data.columns if col.startswith(("kw_", "theme_"))]
+        base_data = _add_market_volatility(
+            _add_theme_columns(build_dataset(price_path, speeches_path)),
+            data_dir=data_dir,
+            start=start,
+            update=update,
+        )
 
-        split_info = {
-            "ticker": symbol,
-            "split_date": split.date().isoformat(),
-            "horizon_days": int(horizon_days),
-            "train_start": train["date"].min().date().isoformat(),
-            "train_end": train["date"].max().date().isoformat(),
-            "test_start": test["date"].min().date().isoformat(),
-            "test_end": test["date"].max().date().isoformat(),
-            "train_rows": int(len(train)),
-            "test_rows": int(len(test)),
-            "overlap": bool(train["date"].max() >= test["date"].min()),
-            "min_keyword_days": int(min_keyword_days),
-            "min_abs_t_stat": float(min_abs_t_stat),
-            "require_stable_direction": bool(require_stable_direction),
-            "allowed_direction": allowed_direction,
-        }
-        split_rows.append(split_info)
+        ticker_rows: list[dict[str, object]] = []
+        for horizon in horizon_list:
+            data = _prepare_horizon(base_data, horizon)
+            train, test, split = _split_by_time(data, split_date, train_fraction)
+            low_vol, high_vol = _vol_thresholds(train)
+            train = _assign_vol_regime(train, low_vol, high_vol)
+            test = _assign_vol_regime(test, low_vol, high_vol)
+            signal_cols = [col for col in data.columns if col.startswith(("kw_", "theme_"))]
 
-        rows = [
-            _keyword_row(
-                symbol,
-                signal_col,
-                train,
-                test,
-                min_keyword_days,
-                cost_bps,
-                min_abs_t_stat,
-                require_stable_direction,
-                allowed_direction,
-                horizon_days,
-            )
-            for signal_col in signal_cols
-        ]
-        ticker_report = pd.DataFrame(rows)
+            split_info = {
+                "ticker": symbol,
+                "split_date": split.date().isoformat(),
+                "horizon_days": int(horizon),
+                "train_start": train["date"].min().date().isoformat(),
+                "train_end": train["date"].max().date().isoformat(),
+                "test_start": test["date"].min().date().isoformat(),
+                "test_end": test["date"].max().date().isoformat(),
+                "train_rows": int(len(train)),
+                "test_rows": int(len(test)),
+                "overlap": bool(train["date"].max() >= test["date"].min()),
+                "market_vol_low_threshold": low_vol,
+                "market_vol_high_threshold": high_vol,
+                "min_keyword_days": int(min_keyword_days),
+                "min_abs_t_stat": float(min_abs_t_stat),
+                "require_stable_direction": bool(require_stable_direction),
+                "allowed_direction": allowed_direction,
+            }
+            split_rows.append(split_info)
+
+            regime_pairs = [("all", train, test)]
+            for regime in ["low", "medium", "high"]:
+                regime_pairs.append(
+                    (
+                        regime,
+                        train[train["vol_regime"] == regime],
+                        test[test["vol_regime"] == regime],
+                    )
+                )
+
+            for regime, regime_train, regime_test in regime_pairs:
+                if regime_train.empty or regime_test.empty:
+                    continue
+                rows = [
+                    _keyword_row(
+                        symbol,
+                        signal_col,
+                        regime_train,
+                        regime_test,
+                        min_keyword_days,
+                        cost_bps,
+                        min_abs_t_stat,
+                        require_stable_direction,
+                        allowed_direction,
+                        horizon,
+                        regime,
+                    )
+                    for signal_col in signal_cols
+                ]
+                ticker_rows.extend(rows)
+                all_rows.extend(rows)
+
+        ticker_report = pd.DataFrame(ticker_rows)
         ticker_report.to_csv(out_dir / f"{symbol}_keyword_impact.csv", index=False)
-        all_rows.extend(rows)
 
     report = pd.DataFrame(all_rows)
     if not report.empty:

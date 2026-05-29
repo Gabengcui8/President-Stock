@@ -59,8 +59,8 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 # 更严格：训练期前后两半方向必须一致，只保留做多方向、t-stat 至少 1.5
 python -m spy_trump_model keyword-impact --tickers SPY QQQ SMH XLI --train-fraction 0.7 --min-keyword-days 5 --min-abs-t-stat 1.5 --allowed-direction long
 
-# 提高样本功效：用 5 个交易日累计收益验证关键词/主题影响
-python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizon-days 5 --train-fraction 0.7 --min-keyword-days 5
+# 信号有效期比较：同时验证 1/3/5 个交易日，并按 SPY 20 日波动率分层
+python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizons 1 3 5 --train-fraction 0.7 --min-keyword-days 5
 ```
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
