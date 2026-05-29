@@ -11,6 +11,7 @@
 - SPY 数据：用 `yfinance` 下载一次到 `data/raw/SPY.csv`，之后本地存在就直接读取。
 - 发言/帖子数据：优先读取 `data/raw/trump_speeches.csv`。你可以手动维护，也可以抓取 Trump's Truth 归档、Truth Social 公开帖子和白宫公开视频/remarks 条目。
 - 特征：每日发言数量、文本长度、情绪分数、重点词频，例如 tariff、china、fed、rate、oil、war、tax、regulation。
+- 时间对齐：带时间戳的帖子按美东时间拆成盘前、盘中、盘后、周末；盘后和非交易日帖子会对齐到下一个 SPY 交易日。
 - 标签：当天发言预测 SPY 下一交易日涨跌，避免把未来价格泄漏进训练。
 - 模型：逻辑回归基础版，时间序列 walk-forward 回测，输出信号和指标。
 
