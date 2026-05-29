@@ -10,7 +10,7 @@
 
 - SPY 数据：用 `yfinance` 下载一次到 `data/raw/SPY.csv`，之后本地存在就直接读取。
 - 发言/帖子数据：优先读取 `data/raw/trump_speeches.csv`。你可以手动维护，也可以抓取 Trump's Truth 归档、Truth Social 公开帖子和白宫公开视频/remarks 条目。
-- 特征：每日发言数量、文本长度、情绪分数、重点词频，例如 tariff、china、fed、rate、oil、war、tax、regulation。
+- 特征：每日发言数量、文本长度、情绪分数、重点词频，以及文本哈希特征。文本哈希会让模型从词和短语里学习，不只依赖手写关键词。
 - 时间对齐：带时间戳的帖子按美东时间拆成盘前、盘中、盘后、周末；盘后和非交易日帖子会对齐到下一个 SPY 交易日。
 - 标签：当天发言预测 SPY 下一交易日涨跌，避免把未来价格泄漏进训练。
 - 模型：逻辑回归基础版，时间序列 walk-forward 回测，输出信号和指标。
@@ -49,6 +49,9 @@ python -m spy_trump_model fetch-whitehouse --pages 5
 
 # 训练并回测
 python -m spy_trump_model train --min-train-days 252
+
+# 让模型自己比较多个资产，而不是手写“关键词 -> 行业”
+python -m spy_trump_model compare-assets --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --cost-bps 1
 ```
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
@@ -70,6 +73,7 @@ crontab -e
 - `data/processed/model_dataset.csv`：建模用数据
 - `outputs/signals.csv`：每日预测概率和信号
 - `outputs/metrics.json`：回测指标
+- `outputs/assets/summary.csv`：多资产比较结果
 
 ## 如果输出里 speeches 是 0 行
 

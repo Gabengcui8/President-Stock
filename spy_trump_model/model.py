@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from .data import ensure_parent
+from .data import download_spy, ensure_parent
 from .features import build_dataset, feature_columns
 
 
@@ -156,3 +156,64 @@ def train_and_backtest(
     ensure_parent(metrics_out).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
     return metrics
+
+
+def compare_assets(
+    tickers: list[str],
+    start: str = "2015-01-01",
+    speeches_path: str | Path = "data/raw/trump_speeches.csv",
+    data_dir: str | Path = "data/raw",
+    outputs_dir: str | Path = "outputs/assets",
+    min_train_days: int = 252,
+    cost_bps: float = 1.0,
+    update: bool = False,
+) -> pd.DataFrame:
+    out_dir = Path(outputs_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+
+    for ticker in tickers:
+        symbol = ticker.upper()
+        price_path = Path(data_dir) / f"{symbol}.csv"
+        download_spy(ticker=symbol, start=start, cache_path=price_path, update=update)
+
+        metrics = train_and_backtest(
+            spy_path=price_path,
+            speeches_path=speeches_path,
+            dataset_out=out_dir / f"{symbol}_dataset.csv",
+            signals_out=out_dir / f"{symbol}_signals.csv",
+            metrics_out=out_dir / f"{symbol}_metrics.json",
+            min_train_days=min_train_days,
+            cost_bps=cost_bps,
+        )
+        row = {
+            "ticker": symbol,
+            "status": metrics.get("status"),
+            "first_event_date": metrics.get("first_event_date"),
+            "event_days_predictions": metrics.get("event_days_predictions"),
+            "event_days_active_trades": metrics.get("event_days_active_trades"),
+            "event_days_accuracy": metrics.get("event_days_accuracy"),
+            "event_days_roc_auc": metrics.get("event_days_roc_auc"),
+            "event_days_strategy_total_return_net": metrics.get("event_days_strategy_total_return_net"),
+            "event_days_buy_hold_total_return": metrics.get("event_days_buy_hold_total_return"),
+            "event_days_strategy_sharpe_net": metrics.get("event_days_strategy_sharpe_net"),
+            "event_days_strategy_max_drawdown_net": metrics.get("event_days_strategy_max_drawdown_net"),
+            "after_first_event_strategy_total_return_net": metrics.get(
+                "after_first_event_strategy_total_return_net"
+            ),
+            "after_first_event_strategy_sharpe_net": metrics.get("after_first_event_strategy_sharpe_net"),
+        }
+        rows.append(row)
+
+    summary = pd.DataFrame(rows)
+    if not summary.empty:
+        summary = summary.sort_values(
+            ["event_days_roc_auc", "event_days_strategy_sharpe_net"],
+            ascending=[False, False],
+            na_position="last",
+        )
+    summary_path = out_dir / "summary.csv"
+    summary.to_csv(summary_path, index=False)
+    print(summary.to_string(index=False))
+    print(f"Saved asset comparison: {summary_path}")
+    return summary

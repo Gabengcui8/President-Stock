@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from .data import download_spy
-from .model import train_and_backtest
+from .model import compare_assets, train_and_backtest
 from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
 
 
@@ -49,6 +49,20 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--min-train-days", type=int, default=252)
     train.add_argument("--cost-bps", type=float, default=1.0)
 
+    compare = sub.add_parser("compare-assets", help="Train the same text model across multiple assets.")
+    compare.add_argument(
+        "--tickers",
+        nargs="+",
+        default=["SPY", "QQQ", "XLE", "XLI", "XLF", "SMH", "FXI", "TLT", "USO", "GLD"],
+    )
+    compare.add_argument("--start", default="2015-01-01")
+    compare.add_argument("--speeches", default="data/raw/trump_speeches.csv")
+    compare.add_argument("--data-dir", default="data/raw")
+    compare.add_argument("--outputs-dir", default="outputs/assets")
+    compare.add_argument("--min-train-days", type=int, default=252)
+    compare.add_argument("--cost-bps", type=float, default=1.0)
+    compare.add_argument("--update", action="store_true")
+
     return parser
 
 
@@ -91,6 +105,17 @@ def main() -> None:
             metrics_out=args.metrics_out,
             min_train_days=args.min_train_days,
             cost_bps=args.cost_bps,
+        )
+    elif args.command == "compare-assets":
+        compare_assets(
+            tickers=args.tickers,
+            start=args.start,
+            speeches_path=args.speeches,
+            data_dir=args.data_dir,
+            outputs_dir=args.outputs_dir,
+            min_train_days=args.min_train_days,
+            cost_bps=args.cost_bps,
+            update=args.update,
         )
 
 

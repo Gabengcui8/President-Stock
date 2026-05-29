@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.feature_extraction.text import HashingVectorizer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 
@@ -137,6 +138,22 @@ def build_daily_speech_features(speeches: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["date"])
 
     features = pd.DataFrame(rows)
+    daily_text = speeches.groupby("signal_date")["text"].apply(lambda values: "\n".join(values)).reset_index()
+    daily_text = daily_text.rename(columns={"signal_date": "date"})
+    vectorizer = HashingVectorizer(
+        n_features=64,
+        alternate_sign=False,
+        norm=None,
+        ngram_range=(1, 2),
+        stop_words="english",
+    )
+    text_matrix = vectorizer.transform(daily_text["text"])
+    text_features = pd.DataFrame(
+        text_matrix.toarray(),
+        columns=[f"text_hash_{i}" for i in range(text_matrix.shape[1])],
+    )
+    text_features.insert(0, "date", daily_text["date"])
+
     agg_map = {
         "speech_count": "sum",
         "speech_premarket_count": "sum",
@@ -152,7 +169,8 @@ def build_daily_speech_features(speeches: pd.DataFrame) -> pd.DataFrame:
         "sentiment_neu": "mean",
     }
     agg_map.update({f"kw_{keyword}": "sum" for keyword in KEYWORDS})
-    return features.groupby("date", as_index=False).agg(agg_map)
+    daily_features = features.groupby("date", as_index=False).agg(agg_map)
+    return daily_features.merge(text_features, on="date", how="left")
 
 
 def align_features_to_trading_days(features: pd.DataFrame, spy_dates: pd.Series) -> pd.DataFrame:
@@ -195,7 +213,9 @@ def build_dataset(spy_path: str | Path, speeches_path: str | Path) -> pd.DataFra
     )
 
     data = spy.merge(speech_features, on="date", how="left")
-    feature_cols = [c for c in data.columns if c.startswith(("speech_", "word_", "char_", "sentiment_", "kw_"))]
+    feature_cols = [
+        c for c in data.columns if c.startswith(("speech_", "word_", "char_", "sentiment_", "kw_", "text_hash_"))
+    ]
     data[feature_cols] = data[feature_cols].fillna(0)
 
     for col in ["speech_count", "word_count", "char_count"]:
@@ -218,6 +238,7 @@ def feature_columns(data: pd.DataFrame) -> list[str]:
         "char_",
         "sentiment_",
         "kw_",
+        "text_hash_",
         "log1p_",
         "spy_return_",
         "spy_vol_",
