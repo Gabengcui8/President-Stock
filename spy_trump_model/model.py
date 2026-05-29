@@ -76,6 +76,7 @@ def train_and_backtest(
     metrics_out: str | Path = "outputs/metrics.json",
     min_train_days: int = 252,
     cost_bps: float = 1.0,
+    verbose: bool = True,
 ) -> dict[str, object]:
     data = build_dataset(spy_path, speeches_path)
     ensure_parent(dataset_out)
@@ -87,7 +88,8 @@ def train_and_backtest(
             f"Need more than {min_train_days + 20} usable rows, got {len(data)}."
         )
         ensure_parent(metrics_out).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-        print(json.dumps(metrics, indent=2))
+        if verbose:
+            print(json.dumps(metrics, indent=2))
         return metrics
 
     predictions = []
@@ -154,7 +156,8 @@ def train_and_backtest(
         metrics.update(_signal_metrics(event_days, "event_days"))
 
     ensure_parent(metrics_out).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    print(json.dumps(metrics, indent=2))
+    if verbose:
+        print(json.dumps(metrics, indent=2))
     return metrics
 
 
@@ -185,6 +188,7 @@ def compare_assets(
             metrics_out=out_dir / f"{symbol}_metrics.json",
             min_train_days=min_train_days,
             cost_bps=cost_bps,
+            verbose=False,
         )
         row = {
             "ticker": symbol,

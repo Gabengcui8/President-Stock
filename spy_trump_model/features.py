@@ -218,13 +218,15 @@ def build_dataset(spy_path: str | Path, speeches_path: str | Path) -> pd.DataFra
     ]
     data[feature_cols] = data[feature_cols].fillna(0)
 
+    engineered = {}
     for col in ["speech_count", "word_count", "char_count"]:
         if col in data.columns:
-            data[f"log1p_{col}"] = np.log1p(data[col])
+            engineered[f"log1p_{col}"] = np.log1p(data[col])
 
-    data["spy_return_1d_lag1"] = data["return_1d"].shift(1)
-    data["spy_return_5d_lag1"] = data["close"].pct_change(5).shift(1)
-    data["spy_vol_20d_lag1"] = data["return_1d"].rolling(20).std().shift(1)
+    engineered["spy_return_1d_lag1"] = data["return_1d"].shift(1)
+    engineered["spy_return_5d_lag1"] = data["close"].pct_change(5).shift(1)
+    engineered["spy_vol_20d_lag1"] = data["return_1d"].rolling(20).std().shift(1)
+    data = pd.concat([data, pd.DataFrame(engineered, index=data.index)], axis=1).copy()
 
     data = data.replace([np.inf, -np.inf], np.nan)
     data = data.dropna(subset=["target_next_up", "target_next_return", "spy_return_1d_lag1", "spy_return_5d_lag1", "spy_vol_20d_lag1"])
