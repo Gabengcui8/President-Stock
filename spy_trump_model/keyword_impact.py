@@ -39,8 +39,13 @@ def _split_by_time(
     data: pd.DataFrame,
     split_date: str | None,
     train_fraction: float,
+    analysis_start: str | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp]:
     ordered = data.sort_values("date").copy()
+    if analysis_start:
+        ordered = ordered[ordered["date"] >= pd.Timestamp(analysis_start)].copy()
+    if len(ordered) < 2:
+        raise ValueError("Analysis window has too few rows. Use an earlier analysis_start.")
     if split_date:
         split = pd.Timestamp(split_date)
     else:
@@ -310,6 +315,7 @@ def keyword_impact_report(
     speeches_path: str | Path = "data/raw/trump_speeches.csv",
     data_dir: str | Path = "data/raw",
     outputs_dir: str | Path = "outputs/keyword_impact",
+    analysis_start: str | None = "2021-01-01",
     split_date: str | None = None,
     train_fraction: float = 0.7,
     min_keyword_days: int = 20,
@@ -343,7 +349,7 @@ def keyword_impact_report(
         ticker_rows: list[dict[str, object]] = []
         for horizon in horizon_list:
             data = _prepare_horizon(base_data, horizon)
-            train, test, split = _split_by_time(data, split_date, train_fraction)
+            train, test, split = _split_by_time(data, split_date, train_fraction, analysis_start)
             low_vol, high_vol = _vol_thresholds(train)
             train = _assign_vol_regime(train, low_vol, high_vol)
             test = _assign_vol_regime(test, low_vol, high_vol)
@@ -353,6 +359,7 @@ def keyword_impact_report(
                 "ticker": symbol,
                 "split_date": split.date().isoformat(),
                 "horizon_days": int(horizon),
+                "analysis_start": analysis_start,
                 "train_start": train["date"].min().date().isoformat(),
                 "train_end": train["date"].max().date().isoformat(),
                 "test_start": test["date"].min().date().isoformat(),

@@ -77,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     impact.add_argument("--speeches", default="data/raw/trump_speeches.csv")
     impact.add_argument("--data-dir", default="data/raw")
     impact.add_argument("--outputs-dir", default="outputs/keyword_impact")
+    impact.add_argument("--analysis-start", default="2021-01-01")
     impact.add_argument("--split-date", default=None)
     impact.add_argument("--train-fraction", type=float, default=0.7)
     impact.add_argument("--min-keyword-days", type=int, default=20)
@@ -150,6 +151,7 @@ def main() -> None:
             speeches_path=args.speeches,
             data_dir=args.data_dir,
             outputs_dir=args.outputs_dir,
+            analysis_start=args.analysis_start,
             split_date=args.split_date,
             train_fraction=args.train_fraction,
             min_keyword_days=args.min_keyword_days,

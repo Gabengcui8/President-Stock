@@ -63,6 +63,8 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ SMH XLI --train-fract
 python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizons 1 3 5 --train-fraction 0.7 --min-keyword-days 5
 ```
 
+`keyword-impact` 默认只分析 `2021-01-01` 之后的数据；可以用 `--analysis-start YYYY-MM-DD` 覆盖。
+
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
 ```bash

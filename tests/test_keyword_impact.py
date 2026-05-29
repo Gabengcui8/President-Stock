@@ -40,6 +40,7 @@ def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
         speeches_path=speeches_path,
         data_dir=tmp_path,
         outputs_dir=out_dir,
+        analysis_start="2023-01-02",
         train_fraction=0.65,
         min_keyword_days=2,
         cost_bps=1.0,
@@ -47,6 +48,7 @@ def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
 
     splits = pd.read_csv(out_dir / "splits.csv", parse_dates=["train_end", "test_start"])
     assert not splits["overlap"].any()
+    assert splits["analysis_start"].iloc[0] == "2023-01-02"
     assert splits["train_end"].iloc[0] < splits["test_start"].iloc[0]
     assert (out_dir / "summary.csv").exists()
     assert "tariff" in set(report["signal"])
