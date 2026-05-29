@@ -281,51 +281,65 @@ def _rss_text(item: ET.Element, name: str) -> str:
 def fetch_trumpstruth_feed(
     start_date: str = "2022-02-01",
     end_date: str | None = None,
+    chunk_days: int = 31,
     out_path: str | Path = "data/raw/trump_speeches.csv",
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
     existing = _read_existing(path)
 
-    params: dict[str, str] = {}
-    if start_date:
-        params["start_date"] = start_date
-    if end_date:
-        params["end_date"] = end_date
+    start = pd.to_datetime(start_date, errors="raise").date()
+    end = pd.to_datetime(end_date, errors="raise").date() if end_date else pd.Timestamp.utcnow().date()
+    if start > end:
+        raise ValueError("start_date must be on or before end_date.")
 
-    response = requests.get(TRUMPSTRUTH_FEED, params=params, headers=HEADERS, timeout=60)
-    response.raise_for_status()
-
-    root = ET.fromstring(response.content)
-    items = root.findall("./channel/item")
     existing_sources = set(existing.get("source", pd.Series(dtype=str)).dropna().astype(str))
     rows: list[dict[str, str]] = []
+    total_items = 0
 
-    for item in items:
-        title = _rss_text(item, "title") or "Trump's Truth archived post"
-        link = _rss_text(item, "link") or _rss_text(item, "guid")
-        pub_date = _rss_text(item, "pubDate")
-        description = _clean_status_html(_rss_text(item, "description"))
-        content = _clean_status_html(_rss_text(item, "{http://purl.org/rss/1.0/modules/content/}encoded"))
-        text = content or description or title
+    current = start
+    while current <= end:
+        chunk_end = min(current + pd.Timedelta(days=max(chunk_days, 1) - 1), end)
+        params = {
+            "start_date": current.isoformat(),
+            "end_date": chunk_end.isoformat(),
+        }
 
-        if not link or not pub_date or not text or link in existing_sources:
-            continue
+        response = requests.get(TRUMPSTRUTH_FEED, params=params, headers=HEADERS, timeout=60)
+        response.raise_for_status()
 
-        parsed = pd.to_datetime(pub_date, errors="coerce", utc=True)
-        if pd.isna(parsed):
-            continue
+        root = ET.fromstring(response.content)
+        items = root.findall("./channel/item")
+        total_items += len(items)
 
-        rows.append(
-            {
-                "date": parsed.tz_convert("America/New_York").date().isoformat(),
-                "datetime": parsed.isoformat(),
-                "title": title,
-                "source": link,
-                "source_type": "trumpstruth",
-                "text": text,
-            }
-        )
-        existing_sources.add(link)
+        for item in items:
+            title = _rss_text(item, "title") or "Trump's Truth archived post"
+            link = _rss_text(item, "link") or _rss_text(item, "guid")
+            pub_date = _rss_text(item, "pubDate")
+            description = _clean_status_html(_rss_text(item, "description"))
+            content = _clean_status_html(_rss_text(item, "{http://purl.org/rss/1.0/modules/content/}encoded"))
+            text = content or description or title
+
+            if not link or not pub_date or not text or link in existing_sources:
+                continue
+
+            parsed = pd.to_datetime(pub_date, errors="coerce", utc=True)
+            if pd.isna(parsed):
+                continue
+
+            rows.append(
+                {
+                    "date": parsed.tz_convert("America/New_York").date().isoformat(),
+                    "datetime": parsed.isoformat(),
+                    "title": title,
+                    "source": link,
+                    "source_type": "trumpstruth",
+                    "text": text,
+                }
+            )
+            existing_sources.add(link)
+
+        current = chunk_end + pd.Timedelta(days=1)
+        time.sleep(0.2)
 
     if rows:
         combined = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
@@ -340,5 +354,8 @@ def fetch_trumpstruth_feed(
     combined = combined.drop_duplicates(subset=["source"], keep="last")
     combined = combined.sort_values(["date", "source"])
     combined.to_csv(path, index=False)
-    print(f"Saved archived posts: {path} ({len(combined)} rows, +{len(rows)} new)")
+    print(
+        f"Saved archived posts: {path} ({len(combined)} rows, +{len(rows)} new, "
+        f"{total_items} feed items scanned)"
+    )
     return combined

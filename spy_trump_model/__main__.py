@@ -37,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     archive = sub.add_parser("fetch-trumpstruth", help="Fetch archived Truth Social posts via Trump's Truth RSS.")
     archive.add_argument("--start-date", default="2022-02-01")
     archive.add_argument("--end-date", default=None)
+    archive.add_argument("--chunk-days", type=int, default=31)
     archive.add_argument("--out", default="data/raw/trump_speeches.csv")
 
     train = sub.add_parser("train", help="Build features, train, and backtest.")
@@ -77,6 +78,7 @@ def main() -> None:
         fetch_trumpstruth_feed(
             start_date=args.start_date,
             end_date=args.end_date,
+            chunk_days=args.chunk_days,
             out_path=args.out,
         )
     elif args.command == "train":
