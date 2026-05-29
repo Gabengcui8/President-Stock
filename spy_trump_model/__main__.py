@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from .data import download_spy
+from .keyword_impact import keyword_impact_report
 from .model import compare_assets, train_and_backtest
 from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
 
@@ -63,6 +64,25 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--cost-bps", type=float, default=1.0)
     compare.add_argument("--update", action="store_true")
 
+    impact = sub.add_parser(
+        "keyword-impact",
+        help="Learn keyword/asset associations on train data and test them out of sample.",
+    )
+    impact.add_argument(
+        "--tickers",
+        nargs="+",
+        default=["SPY", "QQQ", "XLE", "XLI", "XLF", "SMH", "FXI", "TLT", "USO", "GLD"],
+    )
+    impact.add_argument("--start", default="2015-01-01")
+    impact.add_argument("--speeches", default="data/raw/trump_speeches.csv")
+    impact.add_argument("--data-dir", default="data/raw")
+    impact.add_argument("--outputs-dir", default="outputs/keyword_impact")
+    impact.add_argument("--split-date", default=None)
+    impact.add_argument("--train-fraction", type=float, default=0.7)
+    impact.add_argument("--min-keyword-days", type=int, default=20)
+    impact.add_argument("--cost-bps", type=float, default=1.0)
+    impact.add_argument("--update", action="store_true")
+
     return parser
 
 
@@ -114,6 +134,19 @@ def main() -> None:
             data_dir=args.data_dir,
             outputs_dir=args.outputs_dir,
             min_train_days=args.min_train_days,
+            cost_bps=args.cost_bps,
+            update=args.update,
+        )
+    elif args.command == "keyword-impact":
+        keyword_impact_report(
+            tickers=args.tickers,
+            start=args.start,
+            speeches_path=args.speeches,
+            data_dir=args.data_dir,
+            outputs_dir=args.outputs_dir,
+            split_date=args.split_date,
+            train_fraction=args.train_fraction,
+            min_keyword_days=args.min_keyword_days,
             cost_bps=args.cost_bps,
             update=args.update,
         )

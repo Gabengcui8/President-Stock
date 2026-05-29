@@ -52,6 +52,9 @@ python -m spy_trump_model train --min-train-days 252
 
 # 让模型自己比较多个资产，而不是手写“关键词 -> 行业”
 python -m spy_trump_model compare-assets --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --cost-bps 1
+
+# 用训练期真实收益学习“关键词 -> 资产”的方向和强度，再只在测试期验证
+python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --train-fraction 0.7 --min-keyword-days 20
 ```
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
@@ -74,6 +77,8 @@ crontab -e
 - `outputs/signals.csv`：每日预测概率和信号
 - `outputs/metrics.json`：回测指标
 - `outputs/assets/summary.csv`：多资产比较结果
+- `outputs/keyword_impact/summary.csv`：关键词影响的样本外验证结果
+- `outputs/keyword_impact/splits.csv`：每个资产的训练/测试日期切分，确认没有重合
 
 ## 如果输出里 speeches 是 0 行
 
