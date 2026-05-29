@@ -84,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     impact.add_argument("--horizons", nargs="+", type=int, default=None)
     impact.add_argument("--min-abs-t-stat", type=float, default=0.0)
     impact.add_argument("--allowed-direction", choices=["all", "long", "short"], default="all")
+    impact.add_argument("--stability-mode", choices=["event", "calendar"], default="event")
     impact.add_argument("--no-stability-filter", action="store_true")
     impact.add_argument("--cost-bps", type=float, default=1.0)
     impact.add_argument("--update", action="store_true")
@@ -156,6 +157,7 @@ def main() -> None:
             horizons=args.horizons,
             min_abs_t_stat=args.min_abs_t_stat,
             require_stable_direction=not args.no_stability_filter,
+            stability_mode=args.stability_mode,
             allowed_direction=args.allowed_direction,
             cost_bps=args.cost_bps,
             update=args.update,

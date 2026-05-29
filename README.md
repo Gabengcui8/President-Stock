@@ -56,7 +56,7 @@ python -m spy_trump_model compare-assets --tickers SPY QQQ XLE XLI XLF SMH FXI T
 # 用训练期真实收益学习“关键词/主题 -> 资产”的方向和强度，再只在测试期验证
 python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --train-fraction 0.7 --min-keyword-days 20
 
-# 更严格：训练期前后两半方向必须一致，只保留做多方向、t-stat 至少 1.5
+# 更严格：训练期事件样本前后两半方向必须一致，只保留做多方向、t-stat 至少 1.5
 python -m spy_trump_model keyword-impact --tickers SPY QQQ SMH XLI --train-fraction 0.7 --min-keyword-days 5 --min-abs-t-stat 1.5 --allowed-direction long
 
 # 信号有效期比较：同时验证 1/3/5 个交易日，并按 SPY 20 日波动率分层

@@ -128,12 +128,56 @@ def _effect_direction(sample: pd.DataFrame, signal_col: str, return_col: str) ->
     return 1 if effect > 0 else -1 if effect < 0 else 0
 
 
-def _train_half_directions(train: pd.DataFrame, signal_col: str, return_col: str) -> tuple[int | None, int | None]:
+def _event_half_direction(
+    train: pd.DataFrame,
+    event_rows: pd.DataFrame,
+    signal_col: str,
+    return_col: str,
+) -> int | None:
+    if event_rows.empty:
+        return None
+    non_events = train.loc[train[signal_col] <= 0]
+    if non_events.empty:
+        return None
+    effect = event_rows[return_col].mean() - non_events[return_col].mean()
+    return 1 if effect > 0 else -1 if effect < 0 else 0
+
+
+def _train_half_directions(
+    train: pd.DataFrame,
+    signal_col: str,
+    return_col: str,
+    stability_mode: str,
+) -> tuple[int | None, int | None]:
     ordered = train.sort_values("date")
-    midpoint = max(len(ordered) // 2, 1)
-    first = ordered.iloc[:midpoint]
-    second = ordered.iloc[midpoint:]
-    return _effect_direction(first, signal_col, return_col), _effect_direction(second, signal_col, return_col)
+    if stability_mode == "calendar":
+        midpoint = max(len(ordered) // 2, 1)
+        first = ordered.iloc[:midpoint]
+        second = ordered.iloc[midpoint:]
+        return _effect_direction(first, signal_col, return_col), _effect_direction(second, signal_col, return_col)
+
+    events = ordered[ordered[signal_col] > 0]
+    if len(events) < 2:
+        return None, None
+    midpoint = max(len(events) // 2, 1)
+    first_events = events.iloc[:midpoint]
+    second_events = events.iloc[midpoint:]
+    return (
+        _event_half_direction(ordered, first_events, signal_col, return_col),
+        _event_half_direction(ordered, second_events, signal_col, return_col),
+    )
+
+
+def _stable_direction_required(
+    direction: int,
+    first_half_direction: int | None,
+    second_half_direction: int | None,
+) -> bool:
+    return (
+        direction != 0
+        and first_half_direction == direction
+        and second_half_direction == direction
+    )
 
 
 def _direction_allowed(direction: int, allowed_direction: str) -> bool:
@@ -156,6 +200,7 @@ def _keyword_row(
     allowed_direction: str,
     horizon_days: int,
     vol_regime: str,
+    stability_mode: str,
 ) -> dict[str, object]:
     signal_type = "theme" if signal_col.startswith("theme_") else "keyword"
     signal_name = signal_col if signal_type == "theme" else signal_col.removeprefix("kw_")
@@ -184,12 +229,13 @@ def _keyword_row(
         train_t_stat = float(train_effect / stderr) if stderr and not pd.isna(stderr) else None
         direction = 1 if train_effect > 0 else -1 if train_effect < 0 else 0
 
-    first_half_direction, second_half_direction = _train_half_directions(train, signal_col, "target_return")
-    stable_direction = (
-        direction != 0
-        and first_half_direction == direction
-        and second_half_direction == direction
+    first_half_direction, second_half_direction = _train_half_directions(
+        train,
+        signal_col,
+        "target_return",
+        stability_mode,
     )
+    stable_direction = _stable_direction_required(direction, first_half_direction, second_half_direction)
     passes_t_stat = train_t_stat is not None and abs(train_t_stat) >= min_abs_t_stat
     passes_direction = _direction_allowed(direction, allowed_direction)
     selected_for_strategy = bool(
@@ -227,6 +273,7 @@ def _keyword_row(
         "signal_type": signal_type,
         "horizon_days": int(horizon_days),
         "vol_regime": vol_regime,
+        "stability_mode": stability_mode,
         "selected_from_train": bool(enough_train),
         "selected_for_strategy": selected_for_strategy,
         "learned_direction": direction,
@@ -270,6 +317,7 @@ def keyword_impact_report(
     horizons: list[int] | None = None,
     min_abs_t_stat: float = 0.0,
     require_stable_direction: bool = True,
+    stability_mode: str = "event",
     allowed_direction: str = "all",
     cost_bps: float = 1.0,
     update: bool = False,
@@ -317,6 +365,7 @@ def keyword_impact_report(
                 "min_keyword_days": int(min_keyword_days),
                 "min_abs_t_stat": float(min_abs_t_stat),
                 "require_stable_direction": bool(require_stable_direction),
+                "stability_mode": stability_mode,
                 "allowed_direction": allowed_direction,
             }
             split_rows.append(split_info)
@@ -347,6 +396,7 @@ def keyword_impact_report(
                         allowed_direction,
                         horizon,
                         regime,
+                        stability_mode,
                     )
                     for signal_col in signal_cols
                 ]

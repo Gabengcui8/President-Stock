@@ -53,3 +53,4 @@ def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
     assert report.loc[report["signal"] == "tariff", "selected_from_train"].any()
     assert "theme_trade" in set(report["signal"])
     assert {"all", "low", "medium", "high"} & set(report["vol_regime"])
+    assert set(report["stability_mode"]) == {"event"}
