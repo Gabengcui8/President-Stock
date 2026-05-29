@@ -26,6 +26,7 @@ def test_load_speeches_normalizes_mixed_timezones(tmp_path: Path) -> None:
 
     assert len(speeches) == 2
     assert speeches["date"].dt.tz is None
+    assert speeches["date"].tolist() == [pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-03")]
     assert "datetime_et" in speeches.columns
 
 
@@ -47,14 +48,14 @@ def test_build_dataset_aligns_afterhours_to_next_trading_day(tmp_path: Path) -> 
     pd.DataFrame(
         [
             {
-                "date": "2024-01-05",
-                "datetime": "2024-01-05T22:30:00Z",
+                "date": "2024-02-09",
+                "datetime": "2024-02-09T22:30:00Z",
                 "source": "afterhours",
                 "text": "After hours tariff and China post.",
             },
             {
-                "date": "2024-01-06",
-                "datetime": "2024-01-06T15:00:00Z",
+                "date": "2024-02-10",
+                "datetime": "2024-02-10T15:00:00Z",
                 "source": "weekend",
                 "text": "Weekend oil and border post.",
             },
@@ -62,7 +63,7 @@ def test_build_dataset_aligns_afterhours_to_next_trading_day(tmp_path: Path) -> 
     ).to_csv(speeches_path, index=False)
 
     data = build_dataset(spy_path, speeches_path)
-    monday = pd.Timestamp("2024-01-08")
+    monday = pd.Timestamp("2024-02-12")
     monday_row = data.loc[data["date"] == monday].iloc[0]
 
     assert monday_row["speech_count"] == 2

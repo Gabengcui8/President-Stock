@@ -51,12 +51,13 @@ def load_speeches(speeches_path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Speeches file is missing columns: {sorted(missing)}")
 
-    speeches["date"] = pd.to_datetime(speeches["date"], errors="coerce", utc=True).dt.tz_convert(
-        "America/New_York"
-    ).dt.normalize().dt.tz_localize(None)
+    speeches["date"] = pd.to_datetime(
+        speeches["date"].astype(str).str.slice(0, 10),
+        errors="coerce",
+    ).dt.normalize()
     if "datetime" in speeches.columns:
         speeches["datetime_et"] = pd.to_datetime(
-            speeches["datetime"], errors="coerce", utc=True
+            speeches["datetime"], errors="coerce", format="mixed", utc=True
         ).dt.tz_convert("America/New_York")
     else:
         speeches["datetime_et"] = pd.NaT
@@ -106,6 +107,7 @@ def build_daily_speech_features(speeches: pd.DataFrame) -> pd.DataFrame:
     analyzer = SentimentIntensityAnalyzer()
     speeches = speeches.copy()
     speeches["signal_date"] = speeches.apply(_signal_date, axis=1)
+    speeches["signal_date"] = pd.to_datetime(speeches["signal_date"]).dt.normalize()
     speeches["market_session"] = speeches.apply(_market_session, axis=1)
     rows = []
 
@@ -158,7 +160,14 @@ def align_features_to_trading_days(features: pd.DataFrame, spy_dates: pd.Series)
         return features
 
     feature_dates = features.sort_values("date").copy()
-    trading_days = pd.DataFrame({"trading_date": pd.Series(spy_dates).sort_values().unique()})
+    feature_dates["date"] = pd.to_datetime(feature_dates["date"]).astype("datetime64[ns]")
+    trading_days = pd.DataFrame(
+        {
+            "trading_date": pd.to_datetime(pd.Series(spy_dates).sort_values().unique()).astype(
+                "datetime64[ns]"
+            )
+        }
+    )
     aligned = pd.merge_asof(
         feature_dates,
         trading_days,
