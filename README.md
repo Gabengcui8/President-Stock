@@ -9,7 +9,7 @@
 模型把每日特朗普发言聚合成事件特征，再和 SPY 日线数据对齐：
 
 - SPY 数据：用 `yfinance` 下载一次到 `data/raw/SPY.csv`，之后本地存在就直接读取。
-- 发言/帖子数据：优先读取 `data/raw/trump_speeches.csv`。你可以手动维护，也可以抓取 Truth Social 公开帖子和白宫公开视频/remarks 条目。
+- 发言/帖子数据：优先读取 `data/raw/trump_speeches.csv`。你可以手动维护，也可以抓取 Trump's Truth 归档、Truth Social 公开帖子和白宫公开视频/remarks 条目。
 - 特征：每日发言数量、文本长度、情绪分数、重点词频，例如 tariff、china、fed、rate、oil、war、tax、regulation。
 - 标签：当天发言预测 SPY 下一交易日涨跌，避免把未来价格泄漏进训练。
 - 模型：逻辑回归基础版，时间序列 walk-forward 回测，输出信号和指标。
@@ -33,7 +33,11 @@ pip install -r requirements.txt
 # 第一次下载 SPY 到本地；以后存在 data/raw/SPY.csv 会直接复用
 python -m spy_trump_model download-spy --ticker SPY --start 2015-01-01
 
-# 推荐：抓取 @realDonaldTrump 的 Truth Social 公开帖子
+# 推荐：抓取 Trump's Truth 归档 RSS，云服务器更稳定
+python -m spy_trump_model fetch-trumpstruth --start-date 2022-02-01
+
+# 可选：直接抓 @realDonaldTrump 的 Truth Social 公开接口
+# 如果云服务器 IP 被 Truth Social 拒绝，可能会返回 403
 python -m spy_trump_model fetch-truthsocial --handle realDonaldTrump --max-pages 10
 
 # 可选：补充白宫公开视频/remarks 页面条目
@@ -55,7 +59,7 @@ crontab -e
 加入：
 
 ```cron
-30 23 * * 1-5 cd ~/trump-spy-model && . .venv/bin/activate && mkdir -p logs && python -m spy_trump_model download-spy --ticker SPY --start 2015-01-01 --update && python -m spy_trump_model fetch-truthsocial --handle realDonaldTrump --max-pages 3 && python -m spy_trump_model fetch-whitehouse --pages 3 && python -m spy_trump_model train >> logs/run.log 2>&1
+30 23 * * 1-5 cd ~/trump-spy-model && . .venv/bin/activate && mkdir -p logs && python -m spy_trump_model download-spy --ticker SPY --start 2015-01-01 --update && python -m spy_trump_model fetch-trumpstruth --start-date 2022-02-01 && python -m spy_trump_model fetch-whitehouse --pages 3 && python -m spy_trump_model train >> logs/run.log 2>&1
 ```
 
 ## 文件输出
@@ -71,6 +75,7 @@ crontab -e
 先单独运行：
 
 ```bash
+python -m spy_trump_model fetch-trumpstruth --start-date 2022-02-01
 python -m spy_trump_model fetch-truthsocial --handle realDonaldTrump --max-pages 10
 python -m spy_trump_model fetch-whitehouse --pages 10
 ```

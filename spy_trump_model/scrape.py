@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -17,6 +18,7 @@ HEADERS = {
 }
 
 TRUTH_SOCIAL_BASE = "https://truthsocial.com"
+TRUMPSTRUTH_FEED = "https://www.trumpstruth.org/feed"
 
 
 def _normalize_date_column(values: pd.Series) -> pd.Series:
@@ -148,10 +150,18 @@ def fetch_whitehouse_remarks(
 
 def _truthsocial_account_id(handle: str) -> str:
     handle = handle.lstrip("@")
-    data = _get_json(
-        f"{TRUTH_SOCIAL_BASE}/api/v1/accounts/lookup",
-        params={"acct": handle},
-    )
+    try:
+        data = _get_json(
+            f"{TRUTH_SOCIAL_BASE}/api/v1/accounts/lookup",
+            params={"acct": handle},
+        )
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 403:
+            raise RuntimeError(
+                "Truth Social returned 403 Forbidden. This is common on cloud server IPs. "
+                "Use: python -m spy_trump_model fetch-trumpstruth --start-date 2022-02-01"
+            ) from exc
+        raise
     if not isinstance(data, dict) or not data.get("id"):
         raise RuntimeError(f"Could not find Truth Social account: @{handle}")
     return str(data["id"])
@@ -159,6 +169,13 @@ def _truthsocial_account_id(handle: str) -> str:
 
 def _clean_status_html(value: str) -> str:
     return BeautifulSoup(value or "", "lxml").get_text(" ", strip=True)
+
+
+def _read_existing(path: Path) -> pd.DataFrame:
+    columns = ["date", "datetime", "title", "source", "source_type", "text"]
+    if path.exists():
+        return pd.read_csv(path)
+    return pd.DataFrame(columns=columns)
 
 
 def _truthsocial_status_to_row(status: dict[str, object], handle: str) -> dict[str, str] | None:
@@ -197,9 +214,7 @@ def fetch_truthsocial_posts(
     out_path: str | Path = "data/raw/trump_speeches.csv",
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
-    existing = pd.DataFrame(columns=["date", "datetime", "title", "source", "source_type", "text"])
-    if path.exists():
-        existing = pd.read_csv(path)
+    existing = _read_existing(path)
 
     handle = handle.lstrip("@")
     account_id = _truthsocial_account_id(handle)
@@ -253,4 +268,77 @@ def fetch_truthsocial_posts(
     combined = combined.sort_values(["date", "source"])
     combined.to_csv(path, index=False)
     print(f"Saved posts: {path} ({len(combined)} rows, +{len(rows)} new)")
+    return combined
+
+
+def _rss_text(item: ET.Element, name: str) -> str:
+    child = item.find(name)
+    if child is None or child.text is None:
+        return ""
+    return child.text.strip()
+
+
+def fetch_trumpstruth_feed(
+    start_date: str = "2022-02-01",
+    end_date: str | None = None,
+    out_path: str | Path = "data/raw/trump_speeches.csv",
+) -> pd.DataFrame:
+    path = ensure_parent(out_path)
+    existing = _read_existing(path)
+
+    params: dict[str, str] = {}
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+
+    response = requests.get(TRUMPSTRUTH_FEED, params=params, headers=HEADERS, timeout=60)
+    response.raise_for_status()
+
+    root = ET.fromstring(response.content)
+    items = root.findall("./channel/item")
+    existing_sources = set(existing.get("source", pd.Series(dtype=str)).dropna().astype(str))
+    rows: list[dict[str, str]] = []
+
+    for item in items:
+        title = _rss_text(item, "title") or "Trump's Truth archived post"
+        link = _rss_text(item, "link") or _rss_text(item, "guid")
+        pub_date = _rss_text(item, "pubDate")
+        description = _clean_status_html(_rss_text(item, "description"))
+        content = _clean_status_html(_rss_text(item, "{http://purl.org/rss/1.0/modules/content/}encoded"))
+        text = content or description or title
+
+        if not link or not pub_date or not text or link in existing_sources:
+            continue
+
+        parsed = pd.to_datetime(pub_date, errors="coerce", utc=True)
+        if pd.isna(parsed):
+            continue
+
+        rows.append(
+            {
+                "date": parsed.tz_convert("America/New_York").date().isoformat(),
+                "datetime": parsed.isoformat(),
+                "title": title,
+                "source": link,
+                "source_type": "trumpstruth",
+                "text": text,
+            }
+        )
+        existing_sources.add(link)
+
+    if rows:
+        combined = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
+    else:
+        combined = existing
+
+    if combined.empty:
+        raise RuntimeError("Trump's Truth RSS returned no usable posts.")
+
+    combined["date"] = _normalize_date_column(combined["date"])
+    combined = combined.dropna(subset=["text"])
+    combined = combined.drop_duplicates(subset=["source"], keep="last")
+    combined = combined.sort_values(["date", "source"])
+    combined.to_csv(path, index=False)
+    print(f"Saved archived posts: {path} ({len(combined)} rows, +{len(rows)} new)")
     return combined

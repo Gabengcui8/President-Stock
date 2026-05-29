@@ -4,7 +4,7 @@ import argparse
 
 from .data import download_spy
 from .model import train_and_backtest
-from .scrape import fetch_truthsocial_posts, fetch_whitehouse_remarks
+from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     truth.add_argument("--max-pages", type=int, default=5)
     truth.add_argument("--limit", type=int, default=40)
     truth.add_argument("--out", default="data/raw/trump_speeches.csv")
+
+    archive = sub.add_parser("fetch-trumpstruth", help="Fetch archived Truth Social posts via Trump's Truth RSS.")
+    archive.add_argument("--start-date", default="2022-02-01")
+    archive.add_argument("--end-date", default=None)
+    archive.add_argument("--out", default="data/raw/trump_speeches.csv")
 
     train = sub.add_parser("train", help="Build features, train, and backtest.")
     train.add_argument("--spy", default="data/raw/SPY.csv")
@@ -66,6 +71,12 @@ def main() -> None:
             handle=args.handle,
             max_pages=args.max_pages,
             limit=args.limit,
+            out_path=args.out,
+        )
+    elif args.command == "fetch-trumpstruth":
+        fetch_trumpstruth_feed(
+            start_date=args.start_date,
+            end_date=args.end_date,
             out_path=args.out,
         )
     elif args.command == "train":
