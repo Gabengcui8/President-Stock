@@ -51,7 +51,9 @@ def load_speeches(speeches_path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Speeches file is missing columns: {sorted(missing)}")
 
-    speeches["date"] = pd.to_datetime(speeches["date"], errors="coerce").dt.normalize()
+    speeches["date"] = pd.to_datetime(speeches["date"], errors="coerce", utc=True).dt.tz_convert(
+        "America/New_York"
+    ).dt.normalize().dt.tz_localize(None)
     speeches["text"] = speeches["text"].fillna("").astype(str)
     speeches = speeches.dropna(subset=["date"])
     speeches = speeches[speeches["text"].str.len() > 0]

@@ -19,6 +19,11 @@ HEADERS = {
 TRUTH_SOCIAL_BASE = "https://truthsocial.com"
 
 
+def _normalize_date_column(values: pd.Series) -> pd.Series:
+    parsed = pd.to_datetime(values, errors="coerce", utc=True)
+    return parsed.dt.tz_convert("America/New_York").dt.date.astype(str)
+
+
 def _get(url: str) -> BeautifulSoup:
     response = requests.get(url, headers=HEADERS, timeout=30)
     response.raise_for_status()
@@ -131,7 +136,7 @@ def fetch_whitehouse_remarks(
         combined = existing
 
     if not combined.empty:
-        combined["date"] = pd.to_datetime(combined["date"], errors="coerce").dt.date.astype(str)
+        combined["date"] = _normalize_date_column(combined["date"])
         combined = combined.dropna(subset=["text"])
         combined = combined.drop_duplicates(subset=["source"], keep="last")
         combined = combined.sort_values(["date", "source"])
@@ -242,7 +247,7 @@ def fetch_truthsocial_posts(
             "Truth Social fetch returned no usable posts. The public endpoint may be blocked or changed."
         )
 
-    combined["date"] = pd.to_datetime(combined["date"], errors="coerce").dt.date.astype(str)
+    combined["date"] = _normalize_date_column(combined["date"])
     combined = combined.dropna(subset=["text"])
     combined = combined.drop_duplicates(subset=["source"], keep="last")
     combined = combined.sort_values(["date", "source"])
