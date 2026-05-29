@@ -23,7 +23,10 @@ def build_parser() -> argparse.ArgumentParser:
     wh = sub.add_parser("fetch-whitehouse", help="Fetch public White House remarks.")
     wh.add_argument("--pages", type=int, default=3)
     wh.add_argument("--out", default="data/raw/trump_speeches.csv")
-    wh.add_argument("--base-url", default="https://www.whitehouse.gov/remarks/")
+    wh.add_argument(
+        "--base-url",
+        default="https://www.whitehouse.gov/videos/?query-inherit-playlist_term=remarks-from-president-trump",
+    )
 
     train = sub.add_parser("train", help="Build features, train, and backtest.")
     train.add_argument("--spy", default="data/raw/SPY.csv")
@@ -65,4 +68,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

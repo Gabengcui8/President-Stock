@@ -9,7 +9,7 @@
 模型把每日特朗普发言聚合成事件特征，再和 SPY 日线数据对齐：
 
 - SPY 数据：用 `yfinance` 下载一次到 `data/raw/SPY.csv`，之后本地存在就直接读取。
-- 发言数据：优先读取 `data/raw/trump_speeches.csv`。你可以手动维护，也可以用脚本从白宫 remarks 页面抓取公开标题和正文。
+- 发言数据：优先读取 `data/raw/trump_speeches.csv`。你可以手动维护，也可以用脚本从白宫公开视频/remarks 页面抓取公开标题和正文。
 - 特征：每日发言数量、文本长度、情绪分数、重点词频，例如 tariff、china、fed、rate、oil、war、tax、regulation。
 - 标签：当天发言预测 SPY 下一交易日涨跌，避免把未来价格泄漏进训练。
 - 模型：逻辑回归基础版，时间序列 walk-forward 回测，输出信号和指标。
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 # 第一次下载 SPY 到本地；以后存在 data/raw/SPY.csv 会直接复用
 python -m spy_trump_model download-spy --ticker SPY --start 2015-01-01
 
-# 可选：从白宫 remarks 页面抓取公开发言
+# 可选：从白宫公开视频/remarks 页面抓取公开发言条目
 python -m spy_trump_model fetch-whitehouse --pages 5
 
 # 如果你自己有发言 CSV，放到 data/raw/trump_speeches.csv
@@ -63,6 +63,16 @@ crontab -e
 - `outputs/signals.csv`：每日预测概率和信号
 - `outputs/metrics.json`：回测指标
 
+## 如果输出里 speeches 是 0 行
+
+先单独运行：
+
+```bash
+python -m spy_trump_model fetch-whitehouse --pages 10
+```
+
+确认 `data/raw/trump_speeches.csv` 里有数据后再训练。新版代码会在发言文件没有有效行时直接停止训练，避免只用 SPY 滞后收益跑出误导性的结果。
+
 ## 发言 CSV 格式
 
 ```csv
@@ -71,4 +81,3 @@ date,title,source,text
 ```
 
 `date` 可以是 `YYYY-MM-DD`，也可以是更完整的时间戳；模型会按日期聚合。
-

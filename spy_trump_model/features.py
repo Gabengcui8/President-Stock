@@ -55,6 +55,10 @@ def load_speeches(speeches_path: str | Path) -> pd.DataFrame:
     speeches["text"] = speeches["text"].fillna("").astype(str)
     speeches = speeches.dropna(subset=["date"])
     speeches = speeches[speeches["text"].str.len() > 0]
+    if speeches.empty:
+        raise ValueError(
+            "Speeches file has no usable rows. Fetch or import Trump remarks before training."
+        )
     return speeches
 
 
@@ -129,4 +133,3 @@ def feature_columns(data: pd.DataFrame) -> list[str]:
         "spy_vol_",
     )
     return [col for col in data.columns if col.startswith(prefixes)]
-

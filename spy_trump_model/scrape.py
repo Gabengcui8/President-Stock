@@ -29,6 +29,18 @@ def _page_url(base_url: str, page: int) -> str:
     return f"{base_url}{separator}query-10-page={page}"
 
 
+ALLOWED_PATH_MARKERS = ("/remarks/", "/videos/")
+
+
+def _is_relevant_whitehouse_link(href: str, text: str) -> bool:
+    if "whitehouse.gov/" not in href:
+        return False
+    if not any(marker in href for marker in ALLOWED_PATH_MARKERS):
+        return False
+    lowered = text.lower()
+    return any(token in lowered for token in ["trump", "president", "remarks"])
+
+
 def _extract_links(base_url: str, pages: int) -> list[str]:
     links: list[str] = []
     seen: set[str] = set()
@@ -38,9 +50,7 @@ def _extract_links(base_url: str, pages: int) -> list[str]:
         for anchor in soup.select("a[href]"):
             href = urljoin(base_url, anchor["href"])
             text = anchor.get_text(" ", strip=True).lower()
-            if "whitehouse.gov/remarks/" not in href:
-                continue
-            if not any(token in text for token in ["trump", "president"]):
+            if not _is_relevant_whitehouse_link(href, text):
                 continue
             if href not in seen:
                 links.append(href)
@@ -58,8 +68,10 @@ def _extract_article(url: str) -> dict[str, str] | None:
     if body is None:
         return None
 
+    title_text = title.get_text(" ", strip=True) if title else ""
     paragraphs = [p.get_text(" ", strip=True) for p in body.find_all("p")]
-    text = "\n".join(p for p in paragraphs if p)
+    text_parts = [title_text, *paragraphs]
+    text = "\n".join(p for p in text_parts if p)
     if not text:
         return None
 
@@ -69,7 +81,7 @@ def _extract_article(url: str) -> dict[str, str] | None:
 
     return {
         "date": date_value,
-        "title": title.get_text(" ", strip=True) if title else "",
+        "title": title_text,
         "source": url,
         "text": text,
     }
@@ -78,7 +90,7 @@ def _extract_article(url: str) -> dict[str, str] | None:
 def fetch_whitehouse_remarks(
     pages: int = 3,
     out_path: str | Path = "data/raw/trump_speeches.csv",
-    base_url: str = "https://www.whitehouse.gov/remarks/",
+    base_url: str = "https://www.whitehouse.gov/videos/?query-inherit-playlist_term=remarks-from-president-trump",
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
     existing = pd.DataFrame(columns=["date", "title", "source", "text"])
@@ -88,7 +100,10 @@ def fetch_whitehouse_remarks(
     existing_sources = set(existing.get("source", pd.Series(dtype=str)).dropna().astype(str))
     rows = []
 
-    for link in _extract_links(base_url, pages):
+    links = _extract_links(base_url, pages)
+    print(f"Found {len(links)} candidate White House links")
+
+    for link in links:
         if link in existing_sources:
             continue
         try:
@@ -115,4 +130,3 @@ def fetch_whitehouse_remarks(
     combined.to_csv(path, index=False)
     print(f"Saved speeches: {path} ({len(combined)} rows, +{len(rows)} new)")
     return combined
-
