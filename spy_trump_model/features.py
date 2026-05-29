@@ -11,6 +11,9 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 KEYWORDS = [
     "tariff",
+    "trade",
+    "import",
+    "imports",
     "china",
     "fed",
     "rate",

@@ -49,5 +49,6 @@ def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
     assert not splits["overlap"].any()
     assert splits["train_end"].iloc[0] < splits["test_start"].iloc[0]
     assert (out_dir / "summary.csv").exists()
-    assert "tariff" in set(report["keyword"])
-    assert report.loc[report["keyword"] == "tariff", "selected_from_train"].iloc[0]
+    assert "tariff" in set(report["signal"])
+    assert report.loc[report["signal"] == "tariff", "selected_from_train"].iloc[0]
+    assert "theme_trade" in set(report["signal"])

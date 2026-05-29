@@ -80,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
     impact.add_argument("--split-date", default=None)
     impact.add_argument("--train-fraction", type=float, default=0.7)
     impact.add_argument("--min-keyword-days", type=int, default=20)
+    impact.add_argument("--horizon-days", type=int, default=1)
+    impact.add_argument("--min-abs-t-stat", type=float, default=0.0)
+    impact.add_argument("--allowed-direction", choices=["all", "long", "short"], default="all")
+    impact.add_argument("--no-stability-filter", action="store_true")
     impact.add_argument("--cost-bps", type=float, default=1.0)
     impact.add_argument("--update", action="store_true")
 
@@ -147,6 +151,10 @@ def main() -> None:
             split_date=args.split_date,
             train_fraction=args.train_fraction,
             min_keyword_days=args.min_keyword_days,
+            horizon_days=args.horizon_days,
+            min_abs_t_stat=args.min_abs_t_stat,
+            require_stable_direction=not args.no_stability_filter,
+            allowed_direction=args.allowed_direction,
             cost_bps=args.cost_bps,
             update=args.update,
         )
