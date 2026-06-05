@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from spy_trump_model.keyword_impact import DEFAULT_MIN_ABS_T_STAT, keyword_impact_report
+from spy_trump_model.keyword_impact import (
+    DEFAULT_MIN_ABS_T_STAT,
+    _robust_event_diagnostics,
+    keyword_impact_report,
+)
 
 
 def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
@@ -55,6 +59,9 @@ def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
     assert (out_dir / "summary.csv").exists()
     assert (out_dir / "selected.csv").exists()
     assert (out_dir / "robust_selected.csv").exists()
+    assert (out_dir / "robust_event_returns.csv").exists()
+    assert (out_dir / "robust_jackknife.csv").exists()
+    assert (out_dir / "robust_jackknife_summary.csv").exists()
     assert "tariff" in set(report["signal"])
     assert "abs_train_t_stat" in report.columns
     assert "low_test_sample" in report.columns
@@ -113,3 +120,41 @@ def test_keyword_impact_counts_non_overlapping_independent_events(tmp_path: Path
     tariff = report[(report["signal"] == "tariff") & (report["vol_regime"] == "all")].iloc[0]
     assert tariff["train_keyword_days"] == 5
     assert tariff["train_independent_events"] == 2
+
+
+def test_robust_jackknife_uses_independent_events_only() -> None:
+    dates = pd.bdate_range("2024-01-02", periods=10)
+    target_exit_dates = pd.Series(dates).shift(-3).fillna(dates[-1])
+    test = pd.DataFrame(
+        {
+            "date": dates,
+            "target_exit_date": target_exit_dates,
+            "kw_tariff": [1, 1, 0, 1, 0, 0, 0, 0, 0, 0],
+            "target_return": [0.05, 0.04, 0.01, -0.02, 0.01, 0.02, 0.0, 0.0, 0.0, 0.0],
+        }
+    )
+    robust = pd.DataFrame(
+        [
+            {
+                "ticker": "SPY",
+                "signal": "tariff",
+                "signal_type": "keyword",
+                "horizon_days": 3,
+                "vol_regime": "all",
+                "learned_direction": 1,
+                "cost_bps": 0.0,
+            }
+        ]
+    )
+
+    event_report, jackknife_report, summary = _robust_event_diagnostics(
+        robust,
+        {("SPY", 3, "all"): test},
+    )
+
+    assert list(event_report["event_number"]) == [1, 2]
+    assert list(event_report["event_date"]) == ["2024-01-02", "2024-01-05"]
+    assert len(jackknife_report) == 2
+    assert summary["event_count"].iloc[0] == 2
+    assert round(summary["min_jackknife_total_return_net"].iloc[0], 8) == -0.02
+    assert bool(summary["jackknife_fragile"].iloc[0])

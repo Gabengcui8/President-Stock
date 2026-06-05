@@ -29,6 +29,70 @@ TRADABLE_SESSIONS = ["premarket", "market", "afterhours", "weekend"]
 ROBUST_BASE_HORIZON = 3
 ROBUST_CONSISTENCY_HORIZONS = [1, 5]
 
+EVENT_RETURN_COLUMNS = [
+    "ticker",
+    "signal",
+    "signal_type",
+    "horizon_days",
+    "vol_regime",
+    "event_number",
+    "event_date",
+    "exit_date",
+    "signal_count",
+    "learned_direction",
+    "target_return",
+    "signed_gross_return",
+    "net_return",
+    "cumulative_net_return",
+    "cost_bps",
+]
+
+JACKKNIFE_DETAIL_COLUMNS = [
+    "ticker",
+    "signal",
+    "signal_type",
+    "horizon_days",
+    "vol_regime",
+    "omitted_event_number",
+    "omitted_event_date",
+    "omitted_event_net_return",
+    "jackknife_total_return_net",
+    "jackknife_event_sharpe_net",
+    "jackknife_max_drawdown_net",
+    "full_total_return_net",
+    "full_event_sharpe_net",
+    "full_max_drawdown_net",
+    "event_count",
+    "cost_bps",
+]
+
+JACKKNIFE_SUMMARY_COLUMNS = [
+    "ticker",
+    "signal",
+    "signal_type",
+    "horizon_days",
+    "vol_regime",
+    "event_count",
+    "full_total_return_net",
+    "full_event_sharpe_net",
+    "full_max_drawdown_net",
+    "min_jackknife_total_return_net",
+    "median_jackknife_total_return_net",
+    "max_jackknife_total_return_net",
+    "min_jackknife_event_sharpe_net",
+    "median_jackknife_event_sharpe_net",
+    "max_jackknife_event_sharpe_net",
+    "worst_single_event_net_return",
+    "best_single_event_net_return",
+    "positive_total_return_flips_to_nonpositive",
+    "positive_sharpe_flips_to_nonpositive",
+    "most_important_event_date",
+    "most_important_event_net_return",
+    "most_important_event_return_without_it",
+    "jackknife_fragile",
+    "cost_bps",
+]
+
 
 def _max_drawdown(returns: pd.Series) -> float | None:
     if returns.empty:
@@ -53,6 +117,12 @@ def _sample_sharpe(returns: pd.Series) -> float | None:
     if std == 0 or pd.isna(std):
         return None
     return float(returns.mean() / std)
+
+
+def _compound_return(returns: pd.Series) -> float:
+    if returns.empty:
+        return 0.0
+    return float((1 + returns).prod() - 1)
 
 
 def _split_by_time(
@@ -111,6 +181,7 @@ def _prepare_horizon(data: pd.DataFrame, horizon_days: int) -> pd.DataFrame:
     horizon = max(int(horizon_days), 1)
     prepared = data.sort_values("date").copy()
     prepared["target_return"] = prepared["close"].shift(-horizon) / prepared["close"] - 1
+    prepared["target_exit_date"] = prepared["date"].shift(-horizon)
     prepared["target_up"] = (prepared["target_return"] > 0).astype(int)
     return prepared.dropna(subset=["target_return"])
 
@@ -259,6 +330,175 @@ def _direction_allowed(direction: int, allowed_direction: str) -> bool:
     if allowed_direction == "short":
         return direction == -1
     return direction != 0
+
+
+def _signal_column(signal_name: str, signal_type: str) -> str:
+    return signal_name if signal_type == "theme" else f"kw_{signal_name}"
+
+
+def _event_net_returns(event_rows: pd.DataFrame, direction: int, cost_bps: float) -> pd.Series:
+    if event_rows.empty or direction == 0:
+        return pd.Series(dtype=float)
+    signed = direction * event_rows["target_return"].astype(float)
+    return signed - (2 * cost_bps / 10_000)
+
+
+def _robust_event_diagnostics(
+    robust_report: pd.DataFrame,
+    test_contexts: dict[tuple[str, int, str], pd.DataFrame],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if robust_report.empty:
+        return (
+            pd.DataFrame(columns=EVENT_RETURN_COLUMNS),
+            pd.DataFrame(columns=JACKKNIFE_DETAIL_COLUMNS),
+            pd.DataFrame(columns=JACKKNIFE_SUMMARY_COLUMNS),
+        )
+
+    event_rows_out: list[dict[str, object]] = []
+    jackknife_rows: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
+
+    for _, candidate in robust_report.iterrows():
+        ticker = str(candidate["ticker"])
+        signal = str(candidate["signal"])
+        signal_type = str(candidate["signal_type"])
+        horizon = int(candidate["horizon_days"])
+        vol_regime = str(candidate["vol_regime"])
+        direction = int(candidate["learned_direction"])
+        cost_bps = float(candidate["cost_bps"])
+        signal_col = _signal_column(signal, signal_type)
+        test = test_contexts.get((ticker, horizon, vol_regime))
+        if test is None or signal_col not in test.columns:
+            continue
+
+        independent_events = _independent_event_rows(test, signal_col, horizon)
+        net_returns = _event_net_returns(independent_events, direction, cost_bps)
+        if net_returns.empty:
+            continue
+
+        cumulative = (1 + net_returns).cumprod() - 1
+        full_total = _compound_return(net_returns)
+        full_sharpe = _sample_sharpe(net_returns)
+        full_drawdown = _max_drawdown(net_returns)
+        full_metrics = {
+            "full_total_return_net": full_total,
+            "full_event_sharpe_net": full_sharpe,
+            "full_max_drawdown_net": full_drawdown,
+            "event_count": int(len(net_returns)),
+            "cost_bps": cost_bps,
+        }
+        candidate_jackknife_rows: list[dict[str, object]] = []
+
+        for event_number, (idx, event) in enumerate(independent_events.iterrows(), start=1):
+            event_net_return = float(net_returns.loc[idx])
+            event_rows_out.append(
+                {
+                    "ticker": ticker,
+                    "signal": signal,
+                    "signal_type": signal_type,
+                    "horizon_days": horizon,
+                    "vol_regime": vol_regime,
+                    "event_number": event_number,
+                    "event_date": pd.Timestamp(event["date"]).date().isoformat(),
+                    "exit_date": pd.Timestamp(event["target_exit_date"]).date().isoformat(),
+                    "signal_count": float(event[signal_col]),
+                    "learned_direction": direction,
+                    "target_return": float(event["target_return"]),
+                    "signed_gross_return": float(direction * event["target_return"]),
+                    "net_return": event_net_return,
+                    "cumulative_net_return": float(cumulative.loc[idx]),
+                    "cost_bps": cost_bps,
+                }
+            )
+
+            reduced_returns = net_returns.drop(index=idx)
+            candidate_jackknife_rows.append(
+                {
+                    "ticker": ticker,
+                    "signal": signal,
+                    "signal_type": signal_type,
+                    "horizon_days": horizon,
+                    "vol_regime": vol_regime,
+                    "omitted_event_number": event_number,
+                    "omitted_event_date": pd.Timestamp(event["date"]).date().isoformat(),
+                    "omitted_event_net_return": event_net_return,
+                    "jackknife_total_return_net": _compound_return(reduced_returns),
+                    "jackknife_event_sharpe_net": _sample_sharpe(reduced_returns),
+                    "jackknife_max_drawdown_net": _max_drawdown(reduced_returns),
+                    **full_metrics,
+                }
+            )
+
+        jackknife_rows.extend(candidate_jackknife_rows)
+        jackknife_for_candidate = pd.DataFrame(candidate_jackknife_rows)
+        worst_total_idx = jackknife_for_candidate["jackknife_total_return_net"].idxmin()
+        worst_total = jackknife_for_candidate.loc[worst_total_idx]
+        min_sharpe = jackknife_for_candidate["jackknife_event_sharpe_net"].min()
+        positive_sharpe_flips = (
+            bool(full_sharpe is not None and full_sharpe > 0 and min_sharpe <= 0)
+            if not pd.isna(min_sharpe)
+            else False
+        )
+        positive_total_flips = bool(
+            full_total > 0 and (jackknife_for_candidate["jackknife_total_return_net"] <= 0).any()
+        )
+        summary_rows.append(
+            {
+                "ticker": ticker,
+                "signal": signal,
+                "signal_type": signal_type,
+                "horizon_days": horizon,
+                "vol_regime": vol_regime,
+                "event_count": int(len(net_returns)),
+                "full_total_return_net": full_total,
+                "full_event_sharpe_net": full_sharpe,
+                "full_max_drawdown_net": full_drawdown,
+                "min_jackknife_total_return_net": float(
+                    jackknife_for_candidate["jackknife_total_return_net"].min()
+                ),
+                "median_jackknife_total_return_net": float(
+                    jackknife_for_candidate["jackknife_total_return_net"].median()
+                ),
+                "max_jackknife_total_return_net": float(
+                    jackknife_for_candidate["jackknife_total_return_net"].max()
+                ),
+                "min_jackknife_event_sharpe_net": (
+                    float(min_sharpe) if not pd.isna(min_sharpe) else None
+                ),
+                "median_jackknife_event_sharpe_net": (
+                    float(jackknife_for_candidate["jackknife_event_sharpe_net"].median())
+                    if jackknife_for_candidate["jackknife_event_sharpe_net"].notna().any()
+                    else None
+                ),
+                "max_jackknife_event_sharpe_net": (
+                    float(jackknife_for_candidate["jackknife_event_sharpe_net"].max())
+                    if jackknife_for_candidate["jackknife_event_sharpe_net"].notna().any()
+                    else None
+                ),
+                "worst_single_event_net_return": float(net_returns.min()),
+                "best_single_event_net_return": float(net_returns.max()),
+                "positive_total_return_flips_to_nonpositive": positive_total_flips,
+                "positive_sharpe_flips_to_nonpositive": positive_sharpe_flips,
+                "most_important_event_date": worst_total["omitted_event_date"],
+                "most_important_event_net_return": float(worst_total["omitted_event_net_return"]),
+                "most_important_event_return_without_it": float(
+                    worst_total["jackknife_total_return_net"]
+                ),
+                "jackknife_fragile": bool(positive_total_flips or positive_sharpe_flips),
+                "cost_bps": cost_bps,
+            }
+        )
+
+    event_report = pd.DataFrame(event_rows_out, columns=EVENT_RETURN_COLUMNS)
+    jackknife_report = pd.DataFrame(jackknife_rows, columns=JACKKNIFE_DETAIL_COLUMNS)
+    summary_report = pd.DataFrame(summary_rows, columns=JACKKNIFE_SUMMARY_COLUMNS)
+    if not summary_report.empty:
+        summary_report = summary_report.sort_values(
+            ["jackknife_fragile", "min_jackknife_total_return_net"],
+            ascending=[False, True],
+            na_position="last",
+        )
+    return event_report, jackknife_report, summary_report
 
 
 def _keyword_row(
@@ -508,6 +748,7 @@ def keyword_impact_report(
     out_dir.mkdir(parents=True, exist_ok=True)
     all_rows: list[dict[str, object]] = []
     split_rows: list[dict[str, object]] = []
+    test_contexts: dict[tuple[str, int, str], pd.DataFrame] = {}
     horizon_list = horizons if horizons else [horizon_days]
     horizon_list = sorted({max(int(value), 1) for value in horizon_list})
 
@@ -581,6 +822,7 @@ def keyword_impact_report(
             for regime, regime_train, regime_test in regime_pairs:
                 if regime_train.empty or regime_test.empty:
                     continue
+                test_contexts[(symbol, int(horizon), regime)] = regime_test.copy()
                 rows = [
                     _keyword_row(
                         symbol,
@@ -625,11 +867,18 @@ def keyword_impact_report(
             min_robust_train_independent_events,
             min_robust_test_independent_events,
         )
+    event_report, jackknife_report, jackknife_summary = _robust_event_diagnostics(
+        robust_report,
+        test_contexts,
+    )
 
     split_report = pd.DataFrame(split_rows)
     report.to_csv(out_dir / "summary.csv", index=False)
     selected_report.to_csv(out_dir / "selected.csv", index=False)
     robust_report.to_csv(out_dir / "robust_selected.csv", index=False)
+    event_report.to_csv(out_dir / "robust_event_returns.csv", index=False)
+    jackknife_report.to_csv(out_dir / "robust_jackknife.csv", index=False)
+    jackknife_summary.to_csv(out_dir / "robust_jackknife_summary.csv", index=False)
     split_report.to_csv(out_dir / "splits.csv", index=False)
     (out_dir / "splits.json").write_text(
         json.dumps(split_rows, indent=2),
@@ -645,7 +894,11 @@ def keyword_impact_report(
         print("No signals passed the robust independent-event filters.")
     else:
         print(robust_report.head(40).to_string(index=False))
+    if not jackknife_summary.empty:
+        print(jackknife_summary.head(40).to_string(index=False))
     print(f"Saved keyword impact report: {out_dir / 'summary.csv'}")
     print(f"Saved selected keyword candidates: {out_dir / 'selected.csv'}")
     print(f"Saved robust keyword candidates: {out_dir / 'robust_selected.csv'}")
+    print(f"Saved robust event returns: {out_dir / 'robust_event_returns.csv'}")
+    print(f"Saved robust jackknife diagnostics: {out_dir / 'robust_jackknife_summary.csv'}")
     return report

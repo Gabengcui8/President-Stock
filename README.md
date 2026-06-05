@@ -72,6 +72,8 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 
 `summary.csv` 是完整研究表，`selected.csv` 是通过训练期过滤的候选表，`robust_selected.csv` 更严格：默认只看 `vol_regime=all`，以 3 日 horizon 为主，并要求 1 日和 5 日同方向，而且 1/3/5 三个 horizon 的训练期和测试期独立事件数都分别达到 `--min-robust-train-independent-events` 和 `--min-robust-test-independent-events`。
 
+如果有信号进入 `robust_selected.csv`，程序还会自动做留一事件法诊断。`robust_event_returns.csv` 列出每个测试期独立事件的净收益和累计净收益；`robust_jackknife.csv` 逐个删除事件后重算净收益、event Sharpe 和最大回撤；`robust_jackknife_summary.csv` 汇总最差留一结果。`jackknife_fragile=True` 表示删掉某个事件后，总收益或 event Sharpe 会从正数塌到非正数，它是风险提示，不是新的筛选阈值。
+
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
 ```bash
@@ -95,6 +97,9 @@ crontab -e
 - `outputs/keyword_impact/summary.csv`：关键词影响的样本外验证结果
 - `outputs/keyword_impact/selected.csv`：只包含训练期通过过滤的候选信号
 - `outputs/keyword_impact/robust_selected.csv`：独立事件数、3 日主窗口和 1/5 日一致性都通过的更严格候选
+- `outputs/keyword_impact/robust_event_returns.csv`：稳健候选的每个测试期独立事件收益
+- `outputs/keyword_impact/robust_jackknife.csv`：逐个删除独立事件后的留一诊断
+- `outputs/keyword_impact/robust_jackknife_summary.csv`：留一诊断的摘要，检查信号是否被少数事件撑住
 - `outputs/keyword_impact/splits.csv`：每个资产的训练/测试日期切分，确认没有重合
 
 ## 如果输出里 speeches 是 0 行
