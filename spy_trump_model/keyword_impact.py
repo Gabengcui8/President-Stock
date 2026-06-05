@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from .data import download_spy
-from .features import build_dataset
+from .features import KEYWORDS, build_dataset
 
 
 THEME_GROUPS = {
@@ -19,7 +19,13 @@ THEME_GROUPS = {
 }
 
 DEFAULT_MIN_ABS_T_STAT = 1.5
-LOW_TEST_SAMPLE_WARNING_DAYS = 10
+DEFAULT_MIN_INDEPENDENT_EVENTS = 5
+DEFAULT_MIN_TEST_INDEPENDENT_EVENTS = 10
+DEFAULT_COST_BPS = 5.0
+LOW_TEST_SAMPLE_WARNING_EVENTS = 10
+TRADABLE_SESSIONS = ["premarket", "market", "afterhours", "weekend"]
+ROBUST_BASE_HORIZON = 3
+ROBUST_CONSISTENCY_HORIZONS = [1, 5]
 
 
 def _max_drawdown(returns: pd.Series) -> float | None:
@@ -36,6 +42,15 @@ def _sharpe(returns: pd.Series) -> float | None:
     if std == 0 or pd.isna(std):
         return None
     return float((returns.mean() / std) * np.sqrt(252))
+
+
+def _sample_sharpe(returns: pd.Series) -> float | None:
+    if len(returns) < 2:
+        return None
+    std = returns.std()
+    if std == 0 or pd.isna(std):
+        return None
+    return float(returns.mean() / std)
 
 
 def _split_by_time(
@@ -74,6 +89,20 @@ def _add_theme_columns(data: pd.DataFrame) -> pd.DataFrame:
         if cols:
             enriched[theme] = enriched[cols].sum(axis=1)
     return enriched
+
+
+def _apply_tradable_keyword_policy(data: pd.DataFrame, include_unknown_time: bool) -> pd.DataFrame:
+    adjusted = data.copy()
+    sessions = TRADABLE_SESSIONS + (["unknown"] if include_unknown_time else [])
+    for keyword in KEYWORDS:
+        session_cols = [
+            f"kwsession_{keyword}_{session}"
+            for session in sessions
+            if f"kwsession_{keyword}_{session}" in adjusted.columns
+        ]
+        if session_cols:
+            adjusted[f"kw_{keyword}"] = adjusted[session_cols].sum(axis=1)
+    return adjusted
 
 
 def _prepare_horizon(data: pd.DataFrame, horizon_days: int) -> pd.DataFrame:
@@ -136,6 +165,39 @@ def _effect_direction(sample: pd.DataFrame, signal_col: str, return_col: str) ->
     return 1 if effect > 0 else -1 if effect < 0 else 0
 
 
+def _independent_event_rows(
+    sample: pd.DataFrame,
+    signal_col: str,
+    horizon_days: int,
+) -> pd.DataFrame:
+    ordered = sample.sort_values("date")
+    events = ordered[ordered[signal_col] > 0]
+    if events.empty:
+        return events
+
+    min_spacing = max(int(horizon_days), 1)
+    positions = {idx: pos for pos, idx in enumerate(ordered.index)}
+    selected_indexes = []
+    last_position = -min_spacing
+    for idx in events.index:
+        position = positions[idx]
+        if not selected_indexes or position >= last_position + min_spacing:
+            selected_indexes.append(idx)
+            last_position = position
+
+    return ordered.loc[selected_indexes]
+
+
+def _event_t_stat(event_returns: pd.Series, baseline_return: float | None) -> float | None:
+    if baseline_return is None or len(event_returns) < 2:
+        return None
+    diff = event_returns - baseline_return
+    std = diff.std()
+    if std == 0 or pd.isna(std):
+        return None
+    return float(diff.mean() / (std / np.sqrt(len(diff))))
+
+
 def _event_half_direction(
     train: pd.DataFrame,
     event_rows: pd.DataFrame,
@@ -156,6 +218,7 @@ def _train_half_directions(
     signal_col: str,
     return_col: str,
     stability_mode: str,
+    horizon_days: int,
 ) -> tuple[int | None, int | None]:
     ordered = train.sort_values("date")
     if stability_mode == "calendar":
@@ -164,7 +227,7 @@ def _train_half_directions(
         second = ordered.iloc[midpoint:]
         return _effect_direction(first, signal_col, return_col), _effect_direction(second, signal_col, return_col)
 
-    events = ordered[ordered[signal_col] > 0]
+    events = _independent_event_rows(ordered, signal_col, horizon_days)
     if len(events) < 2:
         return None, None
     midpoint = max(len(events) // 2, 1)
@@ -202,6 +265,7 @@ def _keyword_row(
     train: pd.DataFrame,
     test: pd.DataFrame,
     min_keyword_days: int,
+    min_independent_events: int,
     cost_bps: float,
     min_abs_t_stat: float,
     require_stable_direction: bool,
@@ -217,24 +281,28 @@ def _keyword_row(
     train_events = train.loc[train_mask]
     train_non_events = train.loc[~train_mask]
     test_events = test.loc[test_mask]
+    train_independent_events = _independent_event_rows(train, signal_col, horizon_days)
+    test_independent_events = _independent_event_rows(test, signal_col, horizon_days)
 
     train_count = int(len(train_events))
     test_count = int(len(test_events))
-    enough_train = train_count >= min_keyword_days
+    train_independent_count = int(len(train_independent_events))
+    test_independent_count = int(len(test_independent_events))
+    enough_train = train_count >= min_keyword_days and train_independent_count >= min_independent_events
 
     train_event_return = float(train_events["target_return"].mean()) if train_count else None
+    train_independent_return = (
+        float(train_independent_events["target_return"].mean()) if train_independent_count else None
+    )
     train_base_return = float(train["target_return"].mean())
     train_non_event_return = float(train_non_events["target_return"].mean()) if len(train_non_events) else None
     train_effect = None
     train_t_stat = None
     direction = 0
 
-    if enough_train and train_event_return is not None and train_non_event_return is not None:
-        train_effect = train_event_return - train_non_event_return
-        event_var = train_events["target_return"].var()
-        non_event_var = train_non_events["target_return"].var()
-        stderr = np.sqrt((event_var / len(train_events)) + (non_event_var / len(train_non_events)))
-        train_t_stat = float(train_effect / stderr) if stderr and not pd.isna(stderr) else None
+    if enough_train and train_independent_return is not None and train_non_event_return is not None:
+        train_effect = train_independent_return - train_non_event_return
+        train_t_stat = _event_t_stat(train_independent_events["target_return"], train_non_event_return)
         direction = 1 if train_effect > 0 else -1 if train_effect < 0 else 0
 
     first_half_direction, second_half_direction = _train_half_directions(
@@ -242,6 +310,7 @@ def _keyword_row(
         signal_col,
         "target_return",
         stability_mode,
+        horizon_days,
     )
     stable_direction = _stable_direction_required(direction, first_half_direction, second_half_direction)
     abs_train_t_stat = abs(train_t_stat) if train_t_stat is not None else None
@@ -254,26 +323,27 @@ def _keyword_row(
         and (stable_direction or not require_stable_direction)
     )
 
-    test_signal = pd.Series(0, index=test.index, dtype=float)
-    if selected_for_strategy:
-        test_signal.loc[test_mask] = direction
-    turnover = test_signal.diff().abs().fillna(test_signal.abs())
-    gross_returns = test_signal * test["target_return"]
-    net_returns = gross_returns - turnover * (cost_bps / 10_000)
-    active_net = net_returns.loc[test_mask]
+    event_net_returns = pd.Series(dtype=float)
+    if selected_for_strategy and test_independent_count:
+        event_gross_returns = direction * test_independent_events["target_return"]
+        event_net_returns = event_gross_returns - (2 * cost_bps / 10_000)
+    turnover = float(2 * test_independent_count) if selected_for_strategy else 0.0
 
     test_event_return = float(test_events["target_return"].mean()) if test_count else None
+    test_independent_return = (
+        float(test_independent_events["target_return"].mean()) if test_independent_count else None
+    )
     test_base_return = float(test["target_return"].mean())
     test_non_events = test.loc[~test_mask]
     test_non_event_return = float(test_non_events["target_return"].mean()) if len(test_non_events) else None
     test_effect = (
-        test_event_return - test_non_event_return
-        if test_event_return is not None and test_non_event_return is not None
+        test_independent_return - test_non_event_return
+        if test_independent_return is not None and test_non_event_return is not None
         else None
     )
     test_direction_hit_rate = None
-    if selected_for_strategy and test_count and direction != 0:
-        signed = direction * test_events["target_return"]
+    if selected_for_strategy and test_independent_count and direction != 0:
+        signed = direction * test_independent_events["target_return"]
         test_direction_hit_rate = float((signed > 0).mean())
 
     return {
@@ -293,26 +363,106 @@ def _keyword_row(
         "passes_direction_filter": bool(passes_direction),
         "train_keyword_days": train_count,
         "test_keyword_days": test_count,
+        "train_independent_events": train_independent_count,
+        "test_independent_events": test_independent_count,
         "train_avg_next_return_when_keyword": train_event_return,
+        "train_avg_next_return_when_independent_event": train_independent_return,
         "train_avg_next_return_all_days": train_base_return,
         "train_avg_next_return_non_keyword": train_non_event_return,
         "train_effect_vs_non_keyword": train_effect,
         "train_t_stat": train_t_stat,
         "abs_train_t_stat": abs_train_t_stat,
         "train_hit_rate_when_keyword": float(train_events["target_up"].mean()) if train_count else None,
+        "train_hit_rate_when_independent_event": (
+            float(train_independent_events["target_up"].mean()) if train_independent_count else None
+        ),
         "test_avg_next_return_when_keyword": test_event_return,
+        "test_avg_next_return_when_independent_event": test_independent_return,
         "test_avg_next_return_all_days": test_base_return,
         "test_avg_next_return_non_keyword": test_non_event_return,
         "test_effect_vs_non_keyword": test_effect,
         "test_direction_hit_rate": test_direction_hit_rate,
-        "low_test_sample": bool(test_count < LOW_TEST_SAMPLE_WARNING_DAYS),
-        "test_strategy_total_return_net": float((1 + net_returns).prod() - 1),
-        "test_active_strategy_total_return_net": float((1 + active_net).prod() - 1) if not active_net.empty else None,
-        "test_strategy_sharpe_net": _sharpe(net_returns),
-        "test_strategy_max_drawdown_net": _max_drawdown(net_returns),
-        "test_turnover": float(turnover.sum()),
+        "test_direction_hit_rate_independent": test_direction_hit_rate,
+        "low_test_sample": bool(test_independent_count < LOW_TEST_SAMPLE_WARNING_EVENTS),
+        "low_test_independent_sample": bool(test_independent_count < LOW_TEST_SAMPLE_WARNING_EVENTS),
+        "test_strategy_total_return_net": float((1 + event_net_returns).prod() - 1),
+        "test_active_strategy_total_return_net": (
+            float((1 + event_net_returns).prod() - 1) if not event_net_returns.empty else None
+        ),
+        "test_strategy_sharpe_net": _sample_sharpe(event_net_returns),
+        "test_strategy_event_sharpe_net": _sample_sharpe(event_net_returns),
+        "test_strategy_max_drawdown_net": _max_drawdown(event_net_returns),
+        "test_turnover": turnover,
         "cost_bps": cost_bps,
     }
+
+
+def _effect_matches_direction(value: object, direction: int) -> bool:
+    if value is None or pd.isna(value) or direction == 0:
+        return False
+    return float(value) * direction >= 0
+
+
+def _robust_selected_report(report: pd.DataFrame, min_test_independent_events: int) -> pd.DataFrame:
+    if report.empty:
+        return pd.DataFrame()
+
+    base_rows = report[
+        (report["selected_for_strategy"])
+        & (report["vol_regime"] == "all")
+        & (report["horizon_days"] == ROBUST_BASE_HORIZON)
+        & (report["test_independent_events"] >= min_test_independent_events)
+    ]
+    robust_rows: list[dict[str, object]] = []
+    key_cols = ["ticker", "signal", "signal_type", "vol_regime"]
+
+    for _, base in base_rows.iterrows():
+        direction = int(base["learned_direction"])
+        missing_horizons: list[int] = []
+        train_consistent = True
+        test_consistent = True
+
+        for horizon in ROBUST_CONSISTENCY_HORIZONS:
+            matches = report
+            for col in key_cols:
+                matches = matches[matches[col] == base[col]]
+            matches = matches[matches["horizon_days"] == horizon]
+            if matches.empty:
+                missing_horizons.append(horizon)
+                train_consistent = False
+                test_consistent = False
+                continue
+
+            other = matches.iloc[0]
+            train_consistent = train_consistent and _effect_matches_direction(
+                other["train_effect_vs_non_keyword"],
+                direction,
+            )
+            test_consistent = test_consistent and _effect_matches_direction(
+                other["test_effect_vs_non_keyword"],
+                direction,
+            )
+
+        row = base.to_dict()
+        row["robust_base_horizon"] = ROBUST_BASE_HORIZON
+        row["consistency_horizons"] = ",".join(str(value) for value in ROBUST_CONSISTENCY_HORIZONS)
+        row["missing_consistency_horizons"] = ",".join(str(value) for value in missing_horizons)
+        row["train_horizon_direction_consistent"] = bool(train_consistent)
+        row["test_horizon_effect_consistent"] = bool(test_consistent)
+        row["selected_for_robust_strategy"] = bool(train_consistent and test_consistent and not missing_horizons)
+        robust_rows.append(row)
+
+    robust = pd.DataFrame(robust_rows)
+    if robust.empty:
+        return robust
+    robust = robust[robust["selected_for_robust_strategy"]].copy()
+    if robust.empty:
+        return robust
+    return robust.sort_values(
+        ["abs_train_t_stat", "train_independent_events", "test_independent_events"],
+        ascending=[False, False, False],
+        na_position="last",
+    )
 
 
 def keyword_impact_report(
@@ -325,13 +475,16 @@ def keyword_impact_report(
     split_date: str | None = None,
     train_fraction: float = 0.7,
     min_keyword_days: int = 20,
+    min_independent_events: int = DEFAULT_MIN_INDEPENDENT_EVENTS,
+    min_test_independent_events: int = DEFAULT_MIN_TEST_INDEPENDENT_EVENTS,
     horizon_days: int = 1,
     horizons: list[int] | None = None,
     min_abs_t_stat: float = DEFAULT_MIN_ABS_T_STAT,
     require_stable_direction: bool = True,
     stability_mode: str = "event",
     allowed_direction: str = "all",
-    cost_bps: float = 1.0,
+    cost_bps: float = DEFAULT_COST_BPS,
+    include_unknown_time: bool = False,
     update: bool = False,
 ) -> pd.DataFrame:
     out_dir = Path(outputs_dir)
@@ -346,7 +499,12 @@ def keyword_impact_report(
         price_path = Path(data_dir) / f"{symbol}.csv"
         download_spy(ticker=symbol, start=start, cache_path=price_path, update=update)
         base_data = _add_market_volatility(
-            _add_theme_columns(build_dataset(price_path, speeches_path)),
+            _add_theme_columns(
+                _apply_tradable_keyword_policy(
+                    build_dataset(price_path, speeches_path),
+                    include_unknown_time,
+                )
+            ),
             data_dir=data_dir,
             start=start,
             update=update,
@@ -376,10 +534,18 @@ def keyword_impact_report(
                 "market_vol_low_threshold": low_vol,
                 "market_vol_high_threshold": high_vol,
                 "min_keyword_days": int(min_keyword_days),
+                "min_independent_events": int(min_independent_events),
+                "min_test_independent_events": int(min_test_independent_events),
                 "min_abs_t_stat": float(min_abs_t_stat),
                 "require_stable_direction": bool(require_stable_direction),
                 "stability_mode": stability_mode,
                 "allowed_direction": allowed_direction,
+                "cost_bps": float(cost_bps),
+                "include_unknown_time": bool(include_unknown_time),
+                "entry_timing_policy": (
+                    "known timestamps only; premarket/market enter at signal-date close; "
+                    "afterhours/weekend enter at next trading-day close"
+                ),
             }
             split_rows.append(split_info)
 
@@ -403,6 +569,7 @@ def keyword_impact_report(
                         regime_train,
                         regime_test,
                         min_keyword_days,
+                        min_independent_events,
                         cost_bps,
                         min_abs_t_stat,
                         require_stable_direction,
@@ -421,22 +588,25 @@ def keyword_impact_report(
 
     report = pd.DataFrame(all_rows)
     selected_report = pd.DataFrame()
+    robust_report = pd.DataFrame()
     if not report.empty:
         report = report.sort_values(
             [
                 "selected_for_strategy",
                 "abs_train_t_stat",
-                "train_keyword_days",
+                "train_independent_events",
                 "test_strategy_sharpe_net",
             ],
             ascending=[False, False, False, False],
             na_position="last",
         )
         selected_report = report[report["selected_for_strategy"]].copy()
+        robust_report = _robust_selected_report(report, min_test_independent_events)
 
     split_report = pd.DataFrame(split_rows)
     report.to_csv(out_dir / "summary.csv", index=False)
     selected_report.to_csv(out_dir / "selected.csv", index=False)
+    robust_report.to_csv(out_dir / "robust_selected.csv", index=False)
     split_report.to_csv(out_dir / "splits.csv", index=False)
     (out_dir / "splits.json").write_text(
         json.dumps(split_rows, indent=2),
@@ -448,6 +618,11 @@ def keyword_impact_report(
         print("No signals passed the train-only strategy filters.")
     else:
         print(selected_report.head(40).to_string(index=False))
+    if robust_report.empty:
+        print("No signals passed the robust independent-event filters.")
+    else:
+        print(robust_report.head(40).to_string(index=False))
     print(f"Saved keyword impact report: {out_dir / 'summary.csv'}")
     print(f"Saved selected keyword candidates: {out_dir / 'selected.csv'}")
+    print(f"Saved robust keyword candidates: {out_dir / 'robust_selected.csv'}")
     return report

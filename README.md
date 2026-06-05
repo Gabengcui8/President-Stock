@@ -56,8 +56,8 @@ python -m spy_trump_model compare-assets --tickers SPY QQQ XLE XLI XLF SMH FXI T
 # 用训练期真实收益学习“关键词/主题 -> 资产”的方向和强度，再只在测试期验证
 python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --train-fraction 0.7 --min-keyword-days 20
 
-# 更严格：训练期事件样本前后两半方向必须一致，只保留做多方向、t-stat 至少 1.5
-python -m spy_trump_model keyword-impact --tickers SPY QQQ SMH XLI --train-fraction 0.7 --min-keyword-days 5 --min-abs-t-stat 1.5 --allowed-direction long
+# 更严格：训练期独立事件样本前后两半方向必须一致，只保留做多方向、t-stat 至少 1.5
+python -m spy_trump_model keyword-impact --tickers SPY QQQ SMH XLI --train-fraction 0.7 --min-keyword-days 5 --min-independent-events 5 --min-abs-t-stat 1.5 --allowed-direction long
 
 # 信号有效期比较：同时验证 1/3/5 个交易日，并按 SPY 20 日波动率分层
 python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizons 1 3 5 --train-fraction 0.7 --min-keyword-days 5
@@ -66,7 +66,11 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizons 1 3 5 --train-fraction 0.7 --min-keyword-days 5 --min-abs-t-stat 0
 ```
 
-`keyword-impact` 默认只分析 `2021-01-01` 之后的数据；可以用 `--analysis-start YYYY-MM-DD` 覆盖。默认策略候选还要求训练期 `abs(t-stat) >= 1.5`、事件前后两半方向一致，并且满足 `--min-keyword-days`。`summary.csv` 是完整研究表，`selected.csv` 才是通过训练期过滤的候选表。
+`keyword-impact` 默认只分析 `2021-01-01` 之后的数据；可以用 `--analysis-start YYYY-MM-DD` 覆盖。默认策略候选还要求训练期 `abs(t-stat) >= 1.5`、事件前后两半方向一致，并且满足 `--min-keyword-days` 和 `--min-independent-events`。独立事件会按 horizon 去掉重叠窗口，例如 3 日 horizon 下连续 3 个关键词日只算 1 个独立事件。默认成本是 5 bps，按一次进出场收取两边成本。
+
+`keyword-impact` 默认排除没有 `datetime` 的未知时间戳发言。盘前/盘中发言假设最早在信号日收盘成交；盘后/周末发言会先对齐到下一个交易日，再按该日收盘成交。只有做数据审计时才建议加 `--include-unknown-time`。
+
+`summary.csv` 是完整研究表，`selected.csv` 是通过训练期过滤的候选表，`robust_selected.csv` 更严格：默认只看 `vol_regime=all`，以 3 日 horizon 为主，并要求 1 日和 5 日同方向，测试期独立事件数达到 `--min-test-independent-events`。
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
@@ -90,6 +94,7 @@ crontab -e
 - `outputs/assets/summary.csv`：多资产比较结果
 - `outputs/keyword_impact/summary.csv`：关键词影响的样本外验证结果
 - `outputs/keyword_impact/selected.csv`：只包含训练期通过过滤的候选信号
+- `outputs/keyword_impact/robust_selected.csv`：独立事件数、3 日主窗口和 1/5 日一致性都通过的更严格候选
 - `outputs/keyword_impact/splits.csv`：每个资产的训练/测试日期切分，确认没有重合
 
 ## 如果输出里 speeches 是 0 行

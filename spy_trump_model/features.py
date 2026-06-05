@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,8 @@ KEYWORDS = [
     "dollar",
     "jobs",
 ]
+
+MARKET_SESSIONS = ["premarket", "market", "afterhours", "weekend", "unknown"]
 
 
 def load_spy(spy_path: str | Path) -> pd.DataFrame:
@@ -134,13 +137,16 @@ def build_daily_speech_features(speeches: pd.DataFrame) -> pd.DataFrame:
             "sentiment_neu": sentiment["neu"],
         }
         for keyword in KEYWORDS:
-            item[f"kw_{keyword}"] = _keyword_count(text, keyword)
+            count = _keyword_count(text, keyword)
+            item[f"kw_{keyword}"] = count
+            for session in MARKET_SESSIONS:
+                item[f"kwsession_{keyword}_{session}"] = count if row["market_session"] == session else 0
         rows.append(item)
 
     if not rows:
         return pd.DataFrame(columns=["date"])
 
-    features = pd.DataFrame(rows)
+    features = pd.DataFrame(rows).copy()
     daily_text = speeches.groupby("signal_date")["text"].apply(lambda values: "\n".join(values)).reset_index()
     daily_text = daily_text.rename(columns={"signal_date": "date"})
     vectorizer = HashingVectorizer(
@@ -172,7 +178,17 @@ def build_daily_speech_features(speeches: pd.DataFrame) -> pd.DataFrame:
         "sentiment_neu": "mean",
     }
     agg_map.update({f"kw_{keyword}": "sum" for keyword in KEYWORDS})
-    daily_features = features.groupby("date", as_index=False).agg(agg_map)
+    agg_map.update(
+        {
+            f"kwsession_{keyword}_{session}": "sum"
+            for keyword in KEYWORDS
+            for session in MARKET_SESSIONS
+        }
+    )
+    features = features.copy()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", pd.errors.PerformanceWarning)
+        daily_features = features.groupby("date", as_index=False).agg(agg_map)
     return daily_features.merge(text_features, on="date", how="left")
 
 
@@ -197,14 +213,16 @@ def align_features_to_trading_days(features: pd.DataFrame, spy_dates: pd.Series)
         direction="forward",
     )
     aligned = aligned.dropna(subset=["trading_date"]).drop(columns=["date"])
-    aligned = aligned.rename(columns={"trading_date": "date"})
+    aligned = aligned.rename(columns={"trading_date": "date"}).copy()
 
     agg_map = {col: "sum" for col in aligned.columns if col != "date"}
     for col in ["sentiment_compound", "sentiment_pos", "sentiment_neg", "sentiment_neu"]:
         if col in agg_map:
             agg_map[col] = "mean"
 
-    return aligned.groupby("date", as_index=False).agg(agg_map)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", pd.errors.PerformanceWarning)
+        return aligned.groupby("date", as_index=False).agg(agg_map)
 
 
 def build_dataset(spy_path: str | Path, speeches_path: str | Path) -> pd.DataFrame:
@@ -217,7 +235,9 @@ def build_dataset(spy_path: str | Path, speeches_path: str | Path) -> pd.DataFra
 
     data = spy.merge(speech_features, on="date", how="left")
     feature_cols = [
-        c for c in data.columns if c.startswith(("speech_", "word_", "char_", "sentiment_", "kw_", "text_hash_"))
+        c
+        for c in data.columns
+        if c.startswith(("speech_", "word_", "char_", "sentiment_", "kw_", "kwsession_", "text_hash_"))
     ]
     data[feature_cols] = data[feature_cols].fillna(0)
 
