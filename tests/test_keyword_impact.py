@@ -158,3 +158,49 @@ def test_robust_jackknife_uses_independent_events_only() -> None:
     assert summary["event_count"].iloc[0] == 2
     assert round(summary["min_jackknife_total_return_net"].iloc[0], 8) == -0.02
     assert bool(summary["jackknife_fragile"].iloc[0])
+
+
+def test_robust_jackknife_flags_single_event_dominance_without_negative_flip() -> None:
+    dates = pd.bdate_range("2024-01-02", periods=16)
+    target_exit_dates = pd.Series(dates).shift(-3).fillna(dates[-1])
+    returns = [0.0] * len(dates)
+    signal = [0] * len(dates)
+    for idx, value in {0: 0.079, 3: 0.003, 6: -0.002, 9: 0.005}.items():
+        signal[idx] = 1
+        returns[idx] = value
+    test = pd.DataFrame(
+        {
+            "date": dates,
+            "target_exit_date": target_exit_dates,
+            "kw_tariff": signal,
+            "target_return": returns,
+        }
+    )
+    robust = pd.DataFrame(
+        [
+            {
+                "ticker": "GLD",
+                "signal": "tariff",
+                "signal_type": "keyword",
+                "horizon_days": 3,
+                "vol_regime": "all",
+                "learned_direction": 1,
+                "cost_bps": 0.0,
+            }
+        ]
+    )
+
+    _, _, summary = _robust_event_diagnostics(
+        robust,
+        {("GLD", 3, "all"): test},
+    )
+
+    row = summary.iloc[0]
+    assert row["full_total_return_net"] > 0
+    assert row["most_important_event_return_without_it"] > 0
+    assert not bool(row["positive_total_return_flips_to_nonpositive"])
+    assert row["most_important_event_total_return_drop_pct"] > 0.40
+    assert row["max_single_event_contribution_share"] > 0.40
+    assert bool(row["jackknife_fragile"])
+    assert "return_drop" in row["jackknife_fragility_reasons"]
+    assert "dominant_event" in row["jackknife_fragility_reasons"]

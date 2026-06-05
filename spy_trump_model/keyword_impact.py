@@ -28,6 +28,9 @@ LOW_TEST_SAMPLE_WARNING_EVENTS = 10
 TRADABLE_SESSIONS = ["premarket", "market", "afterhours", "weekend"]
 ROBUST_BASE_HORIZON = 3
 ROBUST_CONSISTENCY_HORIZONS = [1, 5]
+JACKKNIFE_RETURN_DROP_FRAGILITY_THRESHOLD = 0.40
+JACKKNIFE_SINGLE_EVENT_SHARE_THRESHOLD = 0.40
+JACKKNIFE_MIN_SHARPE_FLOOR = 0.10
 
 EVENT_RETURN_COLUMNS = [
     "ticker",
@@ -89,7 +92,17 @@ JACKKNIFE_SUMMARY_COLUMNS = [
     "most_important_event_date",
     "most_important_event_net_return",
     "most_important_event_return_without_it",
+    "most_important_event_total_return_drop",
+    "most_important_event_total_return_drop_pct",
+    "max_single_event_contribution_share",
+    "large_single_event_return_drop",
+    "dominant_single_event",
+    "min_sharpe_below_floor",
+    "jackknife_return_drop_threshold",
+    "jackknife_single_event_share_threshold",
+    "jackknife_min_sharpe_floor",
     "jackknife_fragile",
+    "jackknife_fragility_reasons",
     "cost_bps",
 ]
 
@@ -442,6 +455,44 @@ def _robust_event_diagnostics(
         positive_total_flips = bool(
             full_total > 0 and (jackknife_for_candidate["jackknife_total_return_net"] <= 0).any()
         )
+        most_important_return_without_it = float(worst_total["jackknife_total_return_net"])
+        most_important_event_net_return = float(worst_total["omitted_event_net_return"])
+        most_important_drop = full_total - most_important_return_without_it
+        most_important_drop_pct = (
+            most_important_drop / abs(full_total)
+            if abs(full_total) > 1e-12
+            else None
+        )
+        max_single_event_share = (
+            float(net_returns.abs().max() / abs(full_total))
+            if abs(full_total) > 1e-12
+            else None
+        )
+        large_single_event_drop = bool(
+            most_important_drop_pct is not None
+            and most_important_drop_pct >= JACKKNIFE_RETURN_DROP_FRAGILITY_THRESHOLD
+        )
+        dominant_single_event = bool(
+            max_single_event_share is not None
+            and max_single_event_share >= JACKKNIFE_SINGLE_EVENT_SHARE_THRESHOLD
+        )
+        min_sharpe_below_floor = bool(
+            full_sharpe is not None
+            and full_sharpe > 0
+            and not pd.isna(min_sharpe)
+            and min_sharpe < JACKKNIFE_MIN_SHARPE_FLOOR
+        )
+        fragility_reasons = []
+        if positive_total_flips:
+            fragility_reasons.append("total_flip")
+        if positive_sharpe_flips:
+            fragility_reasons.append("sharpe_flip")
+        if large_single_event_drop:
+            fragility_reasons.append("return_drop")
+        if dominant_single_event:
+            fragility_reasons.append("dominant_event")
+        if min_sharpe_below_floor:
+            fragility_reasons.append("low_min_sharpe")
         summary_rows.append(
             {
                 "ticker": ticker,
@@ -480,11 +531,19 @@ def _robust_event_diagnostics(
                 "positive_total_return_flips_to_nonpositive": positive_total_flips,
                 "positive_sharpe_flips_to_nonpositive": positive_sharpe_flips,
                 "most_important_event_date": worst_total["omitted_event_date"],
-                "most_important_event_net_return": float(worst_total["omitted_event_net_return"]),
-                "most_important_event_return_without_it": float(
-                    worst_total["jackknife_total_return_net"]
-                ),
-                "jackknife_fragile": bool(positive_total_flips or positive_sharpe_flips),
+                "most_important_event_net_return": most_important_event_net_return,
+                "most_important_event_return_without_it": most_important_return_without_it,
+                "most_important_event_total_return_drop": float(most_important_drop),
+                "most_important_event_total_return_drop_pct": most_important_drop_pct,
+                "max_single_event_contribution_share": max_single_event_share,
+                "large_single_event_return_drop": large_single_event_drop,
+                "dominant_single_event": dominant_single_event,
+                "min_sharpe_below_floor": min_sharpe_below_floor,
+                "jackknife_return_drop_threshold": JACKKNIFE_RETURN_DROP_FRAGILITY_THRESHOLD,
+                "jackknife_single_event_share_threshold": JACKKNIFE_SINGLE_EVENT_SHARE_THRESHOLD,
+                "jackknife_min_sharpe_floor": JACKKNIFE_MIN_SHARPE_FLOOR,
+                "jackknife_fragile": bool(fragility_reasons),
+                "jackknife_fragility_reasons": ",".join(fragility_reasons),
                 "cost_bps": cost_bps,
             }
         )

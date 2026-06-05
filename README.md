@@ -72,7 +72,7 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 
 `summary.csv` 是完整研究表，`selected.csv` 是通过训练期过滤的候选表，`robust_selected.csv` 更严格：默认只看 `vol_regime=all`，以 3 日 horizon 为主，并要求 1 日和 5 日同方向，而且 1/3/5 三个 horizon 的训练期和测试期独立事件数都分别达到 `--min-robust-train-independent-events` 和 `--min-robust-test-independent-events`。
 
-如果有信号进入 `robust_selected.csv`，程序还会自动做留一事件法诊断。`robust_event_returns.csv` 列出每个测试期独立事件的净收益和累计净收益；`robust_jackknife.csv` 逐个删除事件后重算净收益、event Sharpe 和最大回撤；`robust_jackknife_summary.csv` 汇总最差留一结果。`jackknife_fragile=True` 表示删掉某个事件后，总收益或 event Sharpe 会从正数塌到非正数，它是风险提示，不是新的筛选阈值。
+如果有信号进入 `robust_selected.csv`，程序还会自动做留一事件法诊断。`robust_event_returns.csv` 列出每个测试期独立事件的净收益和累计净收益；`robust_jackknife.csv` 逐个删除事件后重算净收益、event Sharpe 和最大回撤；`robust_jackknife_summary.csv` 汇总最差留一结果。`jackknife_fragile=True` 表示删掉某个事件后，总收益或 event Sharpe 会从正数塌到非正数，或者最大单事件贡献/收益缩水过高，或者最差留一 Sharpe 低于诊断地板。它是风险提示，不是新的筛选阈值，具体触发原因看 `jackknife_fragility_reasons`。
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
