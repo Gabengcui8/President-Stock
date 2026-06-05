@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from .data import download_spy
-from .keyword_impact import keyword_impact_report
+from .keyword_impact import DEFAULT_MIN_ABS_T_STAT, keyword_impact_report
 from .model import compare_assets, train_and_backtest
 from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
 
@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     impact.add_argument("--min-keyword-days", type=int, default=20)
     impact.add_argument("--horizon-days", type=int, default=1)
     impact.add_argument("--horizons", nargs="+", type=int, default=None)
-    impact.add_argument("--min-abs-t-stat", type=float, default=0.0)
+    impact.add_argument("--min-abs-t-stat", type=float, default=DEFAULT_MIN_ABS_T_STAT)
     impact.add_argument("--allowed-direction", choices=["all", "long", "short"], default="all")
     impact.add_argument("--stability-mode", choices=["event", "calendar"], default="event")
     impact.add_argument("--no-stability-filter", action="store_true")

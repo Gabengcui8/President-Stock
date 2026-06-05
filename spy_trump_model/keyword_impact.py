@@ -18,6 +18,9 @@ THEME_GROUPS = {
     "theme_energy": ["oil"],
 }
 
+DEFAULT_MIN_ABS_T_STAT = 1.5
+LOW_TEST_SAMPLE_WARNING_DAYS = 10
+
 
 def _max_drawdown(returns: pd.Series) -> float | None:
     if returns.empty:
@@ -241,7 +244,8 @@ def _keyword_row(
         stability_mode,
     )
     stable_direction = _stable_direction_required(direction, first_half_direction, second_half_direction)
-    passes_t_stat = train_t_stat is not None and abs(train_t_stat) >= min_abs_t_stat
+    abs_train_t_stat = abs(train_t_stat) if train_t_stat is not None else None
+    passes_t_stat = abs_train_t_stat is not None and abs_train_t_stat >= min_abs_t_stat
     passes_direction = _direction_allowed(direction, allowed_direction)
     selected_for_strategy = bool(
         enough_train
@@ -294,12 +298,14 @@ def _keyword_row(
         "train_avg_next_return_non_keyword": train_non_event_return,
         "train_effect_vs_non_keyword": train_effect,
         "train_t_stat": train_t_stat,
+        "abs_train_t_stat": abs_train_t_stat,
         "train_hit_rate_when_keyword": float(train_events["target_up"].mean()) if train_count else None,
         "test_avg_next_return_when_keyword": test_event_return,
         "test_avg_next_return_all_days": test_base_return,
         "test_avg_next_return_non_keyword": test_non_event_return,
         "test_effect_vs_non_keyword": test_effect,
         "test_direction_hit_rate": test_direction_hit_rate,
+        "low_test_sample": bool(test_count < LOW_TEST_SAMPLE_WARNING_DAYS),
         "test_strategy_total_return_net": float((1 + net_returns).prod() - 1),
         "test_active_strategy_total_return_net": float((1 + active_net).prod() - 1) if not active_net.empty else None,
         "test_strategy_sharpe_net": _sharpe(net_returns),
@@ -321,7 +327,7 @@ def keyword_impact_report(
     min_keyword_days: int = 20,
     horizon_days: int = 1,
     horizons: list[int] | None = None,
-    min_abs_t_stat: float = 0.0,
+    min_abs_t_stat: float = DEFAULT_MIN_ABS_T_STAT,
     require_stable_direction: bool = True,
     stability_mode: str = "event",
     allowed_direction: str = "all",
@@ -414,15 +420,23 @@ def keyword_impact_report(
         ticker_report.to_csv(out_dir / f"{symbol}_keyword_impact.csv", index=False)
 
     report = pd.DataFrame(all_rows)
+    selected_report = pd.DataFrame()
     if not report.empty:
         report = report.sort_values(
-            ["test_strategy_sharpe_net", "test_direction_hit_rate", "train_t_stat"],
-            ascending=[False, False, False],
+            [
+                "selected_for_strategy",
+                "abs_train_t_stat",
+                "train_keyword_days",
+                "test_strategy_sharpe_net",
+            ],
+            ascending=[False, False, False, False],
             na_position="last",
         )
+        selected_report = report[report["selected_for_strategy"]].copy()
 
     split_report = pd.DataFrame(split_rows)
     report.to_csv(out_dir / "summary.csv", index=False)
+    selected_report.to_csv(out_dir / "selected.csv", index=False)
     split_report.to_csv(out_dir / "splits.csv", index=False)
     (out_dir / "splits.json").write_text(
         json.dumps(split_rows, indent=2),
@@ -430,6 +444,10 @@ def keyword_impact_report(
     )
 
     print(split_report.to_string(index=False))
-    print(report.head(40).to_string(index=False))
+    if selected_report.empty:
+        print("No signals passed the train-only strategy filters.")
+    else:
+        print(selected_report.head(40).to_string(index=False))
     print(f"Saved keyword impact report: {out_dir / 'summary.csv'}")
+    print(f"Saved selected keyword candidates: {out_dir / 'selected.csv'}")
     return report

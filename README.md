@@ -61,9 +61,12 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ SMH XLI --train-fract
 
 # 信号有效期比较：同时验证 1/3/5 个交易日，并按 SPY 20 日波动率分层
 python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizons 1 3 5 --train-fraction 0.7 --min-keyword-days 5
+
+# 只做探索、想看所有弱信号时才把 t-stat 门槛降到 0；不要把这个输出直接当交易候选
+python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizons 1 3 5 --train-fraction 0.7 --min-keyword-days 5 --min-abs-t-stat 0
 ```
 
-`keyword-impact` 默认只分析 `2021-01-01` 之后的数据；可以用 `--analysis-start YYYY-MM-DD` 覆盖。
+`keyword-impact` 默认只分析 `2021-01-01` 之后的数据；可以用 `--analysis-start YYYY-MM-DD` 覆盖。默认策略候选还要求训练期 `abs(t-stat) >= 1.5`、事件前后两半方向一致，并且满足 `--min-keyword-days`。`summary.csv` 是完整研究表，`selected.csv` 才是通过训练期过滤的候选表。
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
@@ -86,6 +89,7 @@ crontab -e
 - `outputs/metrics.json`：回测指标
 - `outputs/assets/summary.csv`：多资产比较结果
 - `outputs/keyword_impact/summary.csv`：关键词影响的样本外验证结果
+- `outputs/keyword_impact/selected.csv`：只包含训练期通过过滤的候选信号
 - `outputs/keyword_impact/splits.csv`：每个资产的训练/测试日期切分，确认没有重合
 
 ## 如果输出里 speeches 是 0 行

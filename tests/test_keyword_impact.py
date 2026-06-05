@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from spy_trump_model.keyword_impact import keyword_impact_report
+from spy_trump_model.keyword_impact import DEFAULT_MIN_ABS_T_STAT, keyword_impact_report
 
 
 def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
@@ -49,9 +49,13 @@ def test_keyword_impact_uses_non_overlapping_time_split(tmp_path: Path) -> None:
     splits = pd.read_csv(out_dir / "splits.csv", parse_dates=["train_end", "test_start"])
     assert not splits["overlap"].any()
     assert splits["analysis_start"].iloc[0] == "2023-01-02"
+    assert splits["min_abs_t_stat"].iloc[0] == DEFAULT_MIN_ABS_T_STAT
     assert splits["train_end"].iloc[0] < splits["test_start"].iloc[0]
     assert (out_dir / "summary.csv").exists()
+    assert (out_dir / "selected.csv").exists()
     assert "tariff" in set(report["signal"])
+    assert "abs_train_t_stat" in report.columns
+    assert "low_test_sample" in report.columns
     assert report.loc[report["signal"] == "tariff", "selected_from_train"].any()
     assert "theme_trade" in set(report["signal"])
     assert {"all", "low", "medium", "high"} & set(report["vol_regime"])
