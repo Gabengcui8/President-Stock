@@ -7,6 +7,8 @@ from .keyword_impact import (
     DEFAULT_COST_BPS,
     DEFAULT_MIN_ABS_T_STAT,
     DEFAULT_MIN_INDEPENDENT_EVENTS,
+    DEFAULT_MIN_ROBUST_TEST_INDEPENDENT_EVENTS,
+    DEFAULT_MIN_ROBUST_TRAIN_INDEPENDENT_EVENTS,
     DEFAULT_MIN_TEST_INDEPENDENT_EVENTS,
     keyword_impact_report,
 )
@@ -93,6 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MIN_TEST_INDEPENDENT_EVENTS,
     )
+    impact.add_argument(
+        "--min-robust-train-independent-events",
+        type=int,
+        default=DEFAULT_MIN_ROBUST_TRAIN_INDEPENDENT_EVENTS,
+    )
+    impact.add_argument(
+        "--min-robust-test-independent-events",
+        type=int,
+        default=DEFAULT_MIN_ROBUST_TEST_INDEPENDENT_EVENTS,
+    )
     impact.add_argument("--horizon-days", type=int, default=1)
     impact.add_argument("--horizons", nargs="+", type=int, default=None)
     impact.add_argument("--min-abs-t-stat", type=float, default=DEFAULT_MIN_ABS_T_STAT)
@@ -170,6 +182,8 @@ def main() -> None:
             min_keyword_days=args.min_keyword_days,
             min_independent_events=args.min_independent_events,
             min_test_independent_events=args.min_test_independent_events,
+            min_robust_train_independent_events=args.min_robust_train_independent_events,
+            min_robust_test_independent_events=args.min_robust_test_independent_events,
             horizon_days=args.horizon_days,
             horizons=args.horizons,
             min_abs_t_stat=args.min_abs_t_stat,

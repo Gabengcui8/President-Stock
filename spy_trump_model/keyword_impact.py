@@ -21,6 +21,8 @@ THEME_GROUPS = {
 DEFAULT_MIN_ABS_T_STAT = 1.5
 DEFAULT_MIN_INDEPENDENT_EVENTS = 5
 DEFAULT_MIN_TEST_INDEPENDENT_EVENTS = 10
+DEFAULT_MIN_ROBUST_TRAIN_INDEPENDENT_EVENTS = 10
+DEFAULT_MIN_ROBUST_TEST_INDEPENDENT_EVENTS = 10
 DEFAULT_COST_BPS = 5.0
 LOW_TEST_SAMPLE_WARNING_EVENTS = 10
 TRADABLE_SESSIONS = ["premarket", "market", "afterhours", "weekend"]
@@ -403,7 +405,11 @@ def _effect_matches_direction(value: object, direction: int) -> bool:
     return float(value) * direction >= 0
 
 
-def _robust_selected_report(report: pd.DataFrame, min_test_independent_events: int) -> pd.DataFrame:
+def _robust_selected_report(
+    report: pd.DataFrame,
+    min_robust_train_independent_events: int,
+    min_robust_test_independent_events: int,
+) -> pd.DataFrame:
     if report.empty:
         return pd.DataFrame()
 
@@ -411,7 +417,8 @@ def _robust_selected_report(report: pd.DataFrame, min_test_independent_events: i
         (report["selected_for_strategy"])
         & (report["vol_regime"] == "all")
         & (report["horizon_days"] == ROBUST_BASE_HORIZON)
-        & (report["test_independent_events"] >= min_test_independent_events)
+        & (report["train_independent_events"] >= min_robust_train_independent_events)
+        & (report["test_independent_events"] >= min_robust_test_independent_events)
     ]
     robust_rows: list[dict[str, object]] = []
     key_cols = ["ticker", "signal", "signal_type", "vol_regime"]
@@ -434,6 +441,12 @@ def _robust_selected_report(report: pd.DataFrame, min_test_independent_events: i
                 continue
 
             other = matches.iloc[0]
+            train_consistent = train_consistent and (
+                other["train_independent_events"] >= min_robust_train_independent_events
+            )
+            test_consistent = test_consistent and (
+                other["test_independent_events"] >= min_robust_test_independent_events
+            )
             train_consistent = train_consistent and _effect_matches_direction(
                 other["train_effect_vs_non_keyword"],
                 direction,
@@ -446,6 +459,8 @@ def _robust_selected_report(report: pd.DataFrame, min_test_independent_events: i
         row = base.to_dict()
         row["robust_base_horizon"] = ROBUST_BASE_HORIZON
         row["consistency_horizons"] = ",".join(str(value) for value in ROBUST_CONSISTENCY_HORIZONS)
+        row["min_robust_train_independent_events"] = int(min_robust_train_independent_events)
+        row["min_robust_test_independent_events"] = int(min_robust_test_independent_events)
         row["missing_consistency_horizons"] = ",".join(str(value) for value in missing_horizons)
         row["train_horizon_direction_consistent"] = bool(train_consistent)
         row["test_horizon_effect_consistent"] = bool(test_consistent)
@@ -477,6 +492,8 @@ def keyword_impact_report(
     min_keyword_days: int = 20,
     min_independent_events: int = DEFAULT_MIN_INDEPENDENT_EVENTS,
     min_test_independent_events: int = DEFAULT_MIN_TEST_INDEPENDENT_EVENTS,
+    min_robust_train_independent_events: int = DEFAULT_MIN_ROBUST_TRAIN_INDEPENDENT_EVENTS,
+    min_robust_test_independent_events: int = DEFAULT_MIN_ROBUST_TEST_INDEPENDENT_EVENTS,
     horizon_days: int = 1,
     horizons: list[int] | None = None,
     min_abs_t_stat: float = DEFAULT_MIN_ABS_T_STAT,
@@ -536,6 +553,8 @@ def keyword_impact_report(
                 "min_keyword_days": int(min_keyword_days),
                 "min_independent_events": int(min_independent_events),
                 "min_test_independent_events": int(min_test_independent_events),
+                "min_robust_train_independent_events": int(min_robust_train_independent_events),
+                "min_robust_test_independent_events": int(min_robust_test_independent_events),
                 "min_abs_t_stat": float(min_abs_t_stat),
                 "require_stable_direction": bool(require_stable_direction),
                 "stability_mode": stability_mode,
@@ -601,7 +620,11 @@ def keyword_impact_report(
             na_position="last",
         )
         selected_report = report[report["selected_for_strategy"]].copy()
-        robust_report = _robust_selected_report(report, min_test_independent_events)
+        robust_report = _robust_selected_report(
+            report,
+            min_robust_train_independent_events,
+            min_robust_test_independent_events,
+        )
 
     split_report = pd.DataFrame(split_rows)
     report.to_csv(out_dir / "summary.csv", index=False)

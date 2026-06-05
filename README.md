@@ -70,7 +70,7 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 
 `keyword-impact` 默认排除没有 `datetime` 的未知时间戳发言。盘前/盘中发言假设最早在信号日收盘成交；盘后/周末发言会先对齐到下一个交易日，再按该日收盘成交。只有做数据审计时才建议加 `--include-unknown-time`。
 
-`summary.csv` 是完整研究表，`selected.csv` 是通过训练期过滤的候选表，`robust_selected.csv` 更严格：默认只看 `vol_regime=all`，以 3 日 horizon 为主，并要求 1 日和 5 日同方向，测试期独立事件数达到 `--min-test-independent-events`。
+`summary.csv` 是完整研究表，`selected.csv` 是通过训练期过滤的候选表，`robust_selected.csv` 更严格：默认只看 `vol_regime=all`，以 3 日 horizon 为主，并要求 1 日和 5 日同方向，而且 1/3/5 三个 horizon 的训练期和测试期独立事件数都分别达到 `--min-robust-train-independent-events` 和 `--min-robust-test-independent-events`。
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
