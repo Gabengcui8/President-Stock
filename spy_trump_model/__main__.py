@@ -13,6 +13,7 @@ from .keyword_impact import (
     keyword_impact_report,
 )
 from .model import compare_assets, train_and_backtest
+from .paper_ledger import DEFAULT_PAPER_HORIZONS, DEFAULT_PAPER_TICKERS, build_paper_ledger
 from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
 from .signal_expansion import DEFAULT_MARKET_TICKERS, build_expanded_signals
 
@@ -133,6 +134,26 @@ def build_parser() -> argparse.ArgumentParser:
     expansion.add_argument("--no-market-state", action="store_true")
     expansion.add_argument("--update", action="store_true")
 
+    paper = sub.add_parser(
+        "paper-ledger",
+        help="Create a forward observation ledger from expanded signals and cached prices.",
+    )
+    paper.add_argument("--signals", default="data/processed/expanded_signals.csv")
+    paper.add_argument("--out", default="outputs/paper_trading/ledger.csv")
+    paper.add_argument("--summary-out", default="outputs/paper_trading/summary.csv")
+    paper.add_argument("--data-dir", default="data/raw")
+    paper.add_argument("--tickers", nargs="+", default=DEFAULT_PAPER_TICKERS)
+    paper.add_argument("--horizons", nargs="+", type=int, default=DEFAULT_PAPER_HORIZONS)
+    paper.add_argument("--start", default=None)
+    paper.add_argument(
+        "--entry-lag-days",
+        type=int,
+        default=1,
+        help="Trading-day lag from observation date to evaluation entry close.",
+    )
+    paper.add_argument("--all-days", action="store_true", help="Include rows without text observations.")
+    paper.add_argument("--update", action="store_true")
+
     return parser
 
 
@@ -220,6 +241,19 @@ def main() -> None:
             start=args.start,
             market_tickers=args.market_tickers,
             include_market_state=not args.no_market_state,
+            update=args.update,
+        )
+    elif args.command == "paper-ledger":
+        build_paper_ledger(
+            signals_path=args.signals,
+            out_path=args.out,
+            summary_out=args.summary_out,
+            data_dir=args.data_dir,
+            tickers=args.tickers,
+            horizons=args.horizons,
+            start=args.start,
+            entry_lag_days=args.entry_lag_days,
+            text_only=not args.all_days,
             update=args.update,
         )
 

@@ -67,6 +67,9 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 
 # 拓宽信号来源：把多个文本源合成连续主题强度，并合并市场状态
 python -m spy_trump_model signal-expansion --texts data/raw/trump_speeches.csv data/raw/news.csv --out data/processed/expanded_signals.csv --start 2021-01-01
+
+# 纸面观察账本：只记录文本观察日后 1/3/5 个交易日各资产实际表现，不自动下单
+python -m spy_trump_model paper-ledger --signals data/processed/expanded_signals.csv --tickers SPY QQQ GLD TLT USO XLE XLI XLF SMH FXI --horizons 1 3 5
 ```
 
 `keyword-impact` 默认只分析 `2021-01-01` 之后的数据；可以用 `--analysis-start YYYY-MM-DD` 覆盖。默认策略候选还要求训练期 `abs(t-stat) >= 1.5`、事件前后两半方向一致，并且满足 `--min-keyword-days` 和 `--min-independent-events`。独立事件会按 horizon 去掉重叠窗口，例如 3 日 horizon 下连续 3 个关键词日只算 1 个独立事件。默认成本是 5 bps，按一次进出场收取两边成本。
@@ -78,6 +81,8 @@ python -m spy_trump_model signal-expansion --texts data/raw/trump_speeches.csv d
 如果有信号进入 `robust_selected.csv`，程序还会自动做留一事件法诊断。`robust_event_returns.csv` 列出每个测试期独立事件的净收益和累计净收益；`robust_jackknife.csv` 逐个删除事件后重算净收益、event Sharpe 和最大回撤；`robust_jackknife_summary.csv` 汇总最差留一结果。`jackknife_fragile=True` 表示删掉某个事件后，总收益或 event Sharpe 会从正数塌到非正数，或者最大单事件贡献/收益缩水过高，或者最差留一 Sharpe 低于诊断地板。它是风险提示，不是新的筛选阈值，具体触发原因看 `jackknife_fragility_reasons`。
 
 `signal-expansion` 用来解决离散关键词事件太少的问题。它接收一个或多个 CSV 文本源，格式同样建议使用 `date,datetime,title,source,source_type,text`。输出不是更多二元关键词，而是固定主题的连续强度、情绪加权强度、60 日 surprise，以及 SPY/QQQ/GLD/TLT/USO/UUP/VIX/TNX 等市场状态。这个表适合进入 paper trading 和后续模型，不应直接当实盘信号。
+
+`paper-ledger` 会从 `expanded_signals.csv` 生成前向观察账本，默认只保留 `text_item_count > 0` 的日期，并默认从下一交易日收盘开始计算 1/3/5 日 forward return，避免日级文本把盘后信息混进当天收盘。它的作用是记录和复盘，不是自动交易器；最新几天因为未来价格还没出现，forward return 会是空值。
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
@@ -107,6 +112,8 @@ crontab -e
 - `outputs/keyword_impact/robust_jackknife_summary.csv`：留一诊断的摘要，检查信号是否被少数事件撑住
 - `outputs/keyword_impact/splits.csv`：每个资产的训练/测试日期切分，确认没有重合
 - `data/processed/expanded_signals.csv`：连续主题强度、新闻/发言来源、情绪和市场状态信号
+- `outputs/paper_trading/ledger.csv`：纸面观察账本，记录每个文本观察日和未来 1/3/5 日资产表现
+- `outputs/paper_trading/summary.csv`：纸面观察账本的资产/窗口汇总
 
 ## 如果输出里 speeches 是 0 行
 
