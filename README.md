@@ -64,6 +64,9 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 
 # 只做探索、想看所有弱信号时才把 t-stat 门槛降到 0；不要把这个输出直接当交易候选
 python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI TLT USO GLD --horizons 1 3 5 --train-fraction 0.7 --min-keyword-days 5 --min-abs-t-stat 0
+
+# 拓宽信号来源：把多个文本源合成连续主题强度，并合并市场状态
+python -m spy_trump_model signal-expansion --texts data/raw/trump_speeches.csv data/raw/news.csv --out data/processed/expanded_signals.csv --start 2021-01-01
 ```
 
 `keyword-impact` 默认只分析 `2021-01-01` 之后的数据；可以用 `--analysis-start YYYY-MM-DD` 覆盖。默认策略候选还要求训练期 `abs(t-stat) >= 1.5`、事件前后两半方向一致，并且满足 `--min-keyword-days` 和 `--min-independent-events`。独立事件会按 horizon 去掉重叠窗口，例如 3 日 horizon 下连续 3 个关键词日只算 1 个独立事件。默认成本是 5 bps，按一次进出场收取两边成本。
@@ -73,6 +76,8 @@ python -m spy_trump_model keyword-impact --tickers SPY QQQ XLE XLI XLF SMH FXI T
 `summary.csv` 是完整研究表，`selected.csv` 是通过训练期过滤的候选表，`robust_selected.csv` 更严格：默认只看 `vol_regime=all`，以 3 日 horizon 为主，并要求 1 日和 5 日同方向，而且 1/3/5 三个 horizon 的训练期和测试期独立事件数都分别达到 `--min-robust-train-independent-events` 和 `--min-robust-test-independent-events`。
 
 如果有信号进入 `robust_selected.csv`，程序还会自动做留一事件法诊断。`robust_event_returns.csv` 列出每个测试期独立事件的净收益和累计净收益；`robust_jackknife.csv` 逐个删除事件后重算净收益、event Sharpe 和最大回撤；`robust_jackknife_summary.csv` 汇总最差留一结果。`jackknife_fragile=True` 表示删掉某个事件后，总收益或 event Sharpe 会从正数塌到非正数，或者最大单事件贡献/收益缩水过高，或者最差留一 Sharpe 低于诊断地板。它是风险提示，不是新的筛选阈值，具体触发原因看 `jackknife_fragility_reasons`。
+
+`signal-expansion` 用来解决离散关键词事件太少的问题。它接收一个或多个 CSV 文本源，格式同样建议使用 `date,datetime,title,source,source_type,text`。输出不是更多二元关键词，而是固定主题的连续强度、情绪加权强度、60 日 surprise，以及 SPY/QQQ/GLD/TLT/USO/UUP/VIX/TNX 等市场状态。这个表适合进入 paper trading 和后续模型，不应直接当实盘信号。
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
 
@@ -101,6 +106,7 @@ crontab -e
 - `outputs/keyword_impact/robust_jackknife.csv`：逐个删除独立事件后的留一诊断
 - `outputs/keyword_impact/robust_jackknife_summary.csv`：留一诊断的摘要，检查信号是否被少数事件撑住
 - `outputs/keyword_impact/splits.csv`：每个资产的训练/测试日期切分，确认没有重合
+- `data/processed/expanded_signals.csv`：连续主题强度、新闻/发言来源、情绪和市场状态信号
 
 ## 如果输出里 speeches 是 0 行
 

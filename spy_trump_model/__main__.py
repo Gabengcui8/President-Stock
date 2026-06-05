@@ -14,6 +14,7 @@ from .keyword_impact import (
 )
 from .model import compare_assets, train_and_backtest
 from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
+from .signal_expansion import DEFAULT_MARKET_TICKERS, build_expanded_signals
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,6 +116,23 @@ def build_parser() -> argparse.ArgumentParser:
     impact.add_argument("--include-unknown-time", action="store_true")
     impact.add_argument("--update", action="store_true")
 
+    expansion = sub.add_parser(
+        "signal-expansion",
+        help="Build continuous theme, source, sentiment, and market-state signals.",
+    )
+    expansion.add_argument(
+        "--texts",
+        nargs="+",
+        default=["data/raw/trump_speeches.csv"],
+        help="One or more CSV text sources with date and text columns.",
+    )
+    expansion.add_argument("--out", default="data/processed/expanded_signals.csv")
+    expansion.add_argument("--data-dir", default="data/raw")
+    expansion.add_argument("--start", default="2021-01-01")
+    expansion.add_argument("--market-tickers", nargs="+", default=DEFAULT_MARKET_TICKERS)
+    expansion.add_argument("--no-market-state", action="store_true")
+    expansion.add_argument("--update", action="store_true")
+
     return parser
 
 
@@ -192,6 +210,16 @@ def main() -> None:
             allowed_direction=args.allowed_direction,
             cost_bps=args.cost_bps,
             include_unknown_time=args.include_unknown_time,
+            update=args.update,
+        )
+    elif args.command == "signal-expansion":
+        build_expanded_signals(
+            text_paths=args.texts,
+            out_path=args.out,
+            data_dir=args.data_dir,
+            start=args.start,
+            market_tickers=args.market_tickers,
+            include_market_state=not args.no_market_state,
             update=args.update,
         )
 
