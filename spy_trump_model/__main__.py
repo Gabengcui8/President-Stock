@@ -14,6 +14,7 @@ from .keyword_impact import (
 )
 from .model import compare_assets, train_and_backtest
 from .news_sources import (
+    DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT,
     DEFAULT_GDELT_CHUNK_DAYS,
     DEFAULT_GDELT_RETRY_ATTEMPTS,
     DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
@@ -81,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gdelt.add_argument("--sleep-seconds", type=float, default=DEFAULT_GDELT_SLEEP_SECONDS)
     gdelt.add_argument("--article-sleep-seconds", type=float, default=1.5)
+    gdelt.add_argument(
+        "--article-domain-failure-limit",
+        type=int,
+        default=DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT,
+        help="Body fetch failures before skipping that article domain for this run; use -1 to disable.",
+    )
     gdelt.add_argument(
         "--gdelt-retry-attempts",
         type=int,
@@ -255,6 +262,7 @@ def main() -> None:
             article_sleep_seconds=args.article_sleep_seconds,
             gdelt_retry_attempts=args.gdelt_retry_attempts,
             gdelt_retry_backoff_seconds=args.gdelt_retry_backoff_seconds,
+            article_domain_failure_limit=args.article_domain_failure_limit,
         )
     elif args.command == "train":
         train_and_backtest(

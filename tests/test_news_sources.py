@@ -27,6 +27,10 @@ class _FakeResponse:
     def json(self) -> dict[str, object]:
         return self._payload
 
+    @property
+    def text(self) -> str:
+        return str(self._payload.get("html", ""))
+
 
 def test_fetch_gdelt_news_writes_expansion_ready_csv(tmp_path: Path, monkeypatch) -> None:
     out_path = tmp_path / "news.csv"
@@ -144,6 +148,69 @@ def test_fetch_gdelt_news_retries_rate_limited_api_chunk(tmp_path: Path, monkeyp
     assert sleeps == [0.0, 0.0]
     assert len(fetched) == 1
     assert fetched.iloc[0]["source"] == "https://example.com/markets/trump-retry"
+
+
+def test_fetch_gdelt_news_skips_article_domain_after_blocked_body_fetch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    out_path = tmp_path / "news.csv"
+    article_calls: list[str] = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "api.gdeltproject.org" in url:
+            return _FakeResponse(
+                {
+                    "articles": [
+                        {
+                            "url": "https://blocked.example/news/first",
+                            "title": "First blocked article still becomes title text",
+                            "seendate": "20240102T143000Z",
+                            "domain": "blocked.example",
+                        },
+                        {
+                            "url": "https://blocked.example/news/second",
+                            "title": "Second blocked article skips body fetch",
+                            "seendate": "20240103T143000Z",
+                            "domain": "blocked.example",
+                        },
+                        {
+                            "url": "https://open.example/news/third",
+                            "title": "Open article can still fetch body text",
+                            "seendate": "20240104T143000Z",
+                            "domain": "open.example",
+                        },
+                    ]
+                }
+            )
+
+        article_calls.append(url)
+        if "blocked.example" in url:
+            return _FakeResponse({}, status_code=403)
+        return _FakeResponse({"html": "<html><article><p>Fetched open article body.</p></article></html>"})
+
+    monkeypatch.setattr("spy_trump_model.news_sources.requests.get", fake_get)
+
+    fetched = fetch_gdelt_news(
+        out_path=out_path,
+        start_date="2024-01-01",
+        end_date="2024-01-04",
+        queries={"market": '"Donald Trump" stock market'},
+        chunk_days=4,
+        fetch_article_text=True,
+        max_article_fetches=10,
+        article_sleep_seconds=0,
+        sleep_seconds=0,
+        article_domain_failure_limit=1,
+    )
+
+    assert article_calls == [
+        "https://blocked.example/news/first",
+        "https://open.example/news/third",
+    ]
+    assert len(fetched) == 3
+    assert fetched["text"].str.contains("Fetched open article body").sum() == 1
+    assert fetched["text"].str.contains("Second blocked article skips body fetch").sum() == 1
 
 
 def test_parse_gdelt_query_args_accepts_labels_and_raw_queries() -> None:

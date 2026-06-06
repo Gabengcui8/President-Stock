@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -19,6 +20,8 @@ DEFAULT_GDELT_SLEEP_SECONDS = 3.0
 DEFAULT_GDELT_RETRY_ATTEMPTS = 4
 DEFAULT_GDELT_RETRY_BACKOFF_SECONDS = 20.0
 RETRYABLE_GDELT_STATUS_CODES = {429, 500, 502, 503, 504}
+DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT = 1
+ARTICLE_DOMAIN_BLOCK_STATUS_CODES = {401, 403, 404, 410, 429, 451}
 
 DEFAULT_GDELT_QUERIES = {
     "trump_market": '"Donald Trump" (stock OR stocks OR market OR "Wall Street" OR Nasdaq OR "S&P")',
@@ -95,6 +98,18 @@ def _clean_article_text(value: str) -> str:
     return " ".join(str(value or "").split())
 
 
+def _article_url(article: dict[str, object]) -> str:
+    return str(article.get("url") or "").strip()
+
+
+def _article_domain(article: dict[str, object]) -> str:
+    domain = str(article.get("domain") or "").strip().lower()
+    if domain:
+        return domain.removeprefix("www.")
+    parsed = urlparse(_article_url(article))
+    return str(parsed.netloc or "").lower().removeprefix("www.")
+
+
 def _extract_article_body(url: str, timeout: int = 20, max_chars: int = 12000) -> str:
     response = requests.get(url, headers=HEADERS, timeout=timeout)
     response.raise_for_status()
@@ -121,17 +136,18 @@ def _article_to_row(
     fetch_article_text: bool = False,
     article_timeout: int = 20,
     max_article_chars: int = 12000,
-) -> tuple[dict[str, str] | None, bool]:
-    url = str(article.get("url") or "").strip()
+) -> tuple[dict[str, str] | None, bool, str | None]:
+    url = _article_url(article)
     title = str(article.get("title") or "").strip()
     seen_date = _parse_seen_date(article.get("seendate"))
     if not url or not title or seen_date is None:
-        return None, False
+        return None, False, None
 
-    domain = str(article.get("domain") or "").strip()
+    domain = _article_domain(article)
     text_parts: list[str] = []
     article_body = ""
     fetched_article_text = False
+    failed_domain: str | None = None
     if fetch_article_text:
         fetched_article_text = True
         try:
@@ -142,6 +158,10 @@ def _article_to_row(
             )
         except requests.RequestException as exc:
             print(f"Article text fallback for {url}: {exc}")
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+            if status_code in ARTICLE_DOMAIN_BLOCK_STATUS_CODES:
+                failed_domain = domain or None
     if article_body:
         text_parts.append(article_body)
     else:
@@ -156,7 +176,7 @@ def _article_to_row(
         "source": url,
         "source_type": source_type,
         "text": ". ".join(text_parts),
-    }, fetched_article_text
+    }, fetched_article_text, failed_domain
 
 
 def _article_fetch_allowed(fetch_article_text: bool, max_article_fetches: int, fetched: int) -> bool:
@@ -246,6 +266,7 @@ def fetch_gdelt_news(
     article_sleep_seconds: float = 1.5,
     gdelt_retry_attempts: int = DEFAULT_GDELT_RETRY_ATTEMPTS,
     gdelt_retry_backoff_seconds: float = DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
+    article_domain_failure_limit: int = DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT,
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
     existing = _read_existing_news(path)
@@ -260,6 +281,9 @@ def fetch_gdelt_news(
     rows: list[dict[str, str]] = []
     scanned = 0
     article_fetches = 0
+    article_domain_skips = 0
+    blocked_article_domains: set[str] = set()
+    article_domain_failures: dict[str, int] = {}
 
     for label, query in selected_queries.items():
         source_type = f"gdelt_{label}".lower().replace("-", "_")
@@ -281,12 +305,19 @@ def fetch_gdelt_news(
             for article in articles:
                 if not isinstance(article, dict):
                     continue
+                source_url = _article_url(article)
+                if source_url in existing_sources:
+                    continue
+                article_domain = _article_domain(article)
+                domain_blocked = bool(article_domain) and article_domain in blocked_article_domains
                 should_fetch_article = _article_fetch_allowed(
                     fetch_article_text=fetch_article_text,
                     max_article_fetches=max_article_fetches,
                     fetched=article_fetches,
-                )
-                row, attempted_article_fetch = _article_to_row(
+                ) and not domain_blocked
+                if domain_blocked:
+                    article_domain_skips += 1
+                row, attempted_article_fetch, failed_domain = _article_to_row(
                     article,
                     source_type=source_type,
                     fetch_article_text=should_fetch_article,
@@ -295,6 +326,10 @@ def fetch_gdelt_news(
                 )
                 if attempted_article_fetch:
                     article_fetches += 1
+                if failed_domain and int(article_domain_failure_limit) >= 0:
+                    article_domain_failures[failed_domain] = article_domain_failures.get(failed_domain, 0) + 1
+                    if article_domain_failures[failed_domain] >= max(int(article_domain_failure_limit), 1):
+                        blocked_article_domains.add(failed_domain)
                 if row is None or row["source"] in existing_sources:
                     continue
                 rows.append(row)
@@ -317,6 +352,7 @@ def fetch_gdelt_news(
     combined.to_csv(path, index=False)
     print(
         f"Saved GDELT news: {path} ({len(combined)} rows, +{len(rows)} new, "
-        f"{scanned} articles scanned, {article_fetches} article URLs fetched)"
+        f"{scanned} articles scanned, {article_fetches} article URLs fetched, "
+        f"{article_domain_skips} blocked-domain article fetches skipped)"
     )
     return combined
