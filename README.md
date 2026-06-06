@@ -37,6 +37,13 @@ python -m spy_trump_model download-spy --ticker SPY --start 2015-01-01
 # 推荐：抓取 Trump's Truth 归档 RSS，云服务器更稳定
 python -m spy_trump_model fetch-trumpstruth --start-date 2022-02-01
 
+# 拓宽文本源：抓公开新闻标题/链接，默认覆盖 Trump、市场、关税、中国、通胀、能源等主题
+# 默认抓最近约 90 天；可以用 --start-date/--end-date 指定日期范围，实际覆盖以 GDELT 返回为准
+python -m spy_trump_model fetch-gdelt-news --out data/raw/news.csv --max-records 100
+
+# 可选：自定义新闻查询；label=query 可以重复传
+python -m spy_trump_model fetch-gdelt-news --out data/raw/news.csv --query 'tariffs="Donald Trump" tariffs' --query 'oil="Donald Trump" oil energy'
+
 # 可选：直接抓 @realDonaldTrump 的 Truth Social 公开接口
 # 如果云服务器 IP 被 Truth Social 拒绝，可能会返回 403
 python -m spy_trump_model fetch-truthsocial --handle realDonaldTrump --max-pages 10
@@ -82,6 +89,8 @@ python -m spy_trump_model paper-ledger --signals data/processed/expanded_signals
 
 `signal-expansion` 用来解决离散关键词事件太少的问题。它接收一个或多个 CSV 文本源，格式同样建议使用 `date,datetime,title,source,source_type,text`。输出不是更多二元关键词，而是固定主题的连续强度、情绪加权强度、60 日 surprise，以及 SPY/QQQ/GLD/TLT/USO/UUP/VIX/TNX 等市场状态。这个表适合进入 paper trading 和后续模型，不应直接当实盘信号。
 
+`fetch-gdelt-news` 用来把 Trump 自己发言之外的公开新闻标题纳入文本源，默认查询 Trump+市场、Trump+贸易/中国、Trump+通胀/利率、Trump+能源、Trump+美元、Trump+地缘政治、Trump+税收监管、Trump+边境移民等组合。它写入 `data/raw/news.csv`，之后用 `signal-expansion --texts data/raw/trump_speeches.csv data/raw/news.csv` 合并。注意，新闻标题是“市场如何报道/解读 Trump”的代理变量，不等于 Trump 本人发言，所以后面必须继续用 paper ledger 和样本外检验分开看。
+
 `paper-ledger` 会从 `expanded_signals.csv` 生成前向观察账本，默认只保留 `text_item_count > 0` 的日期，并默认从下一交易日收盘开始计算 1/3/5 日 forward return，避免日级文本把盘后信息混进当天收盘。它的作用是记录和复盘，不是自动交易器；最新几天因为未来价格还没出现，forward return 会是空值。
 
 定时每天美股收盘后运行，例如服务器时区为 UTC，约等于美东 18:30：
@@ -100,6 +109,7 @@ crontab -e
 
 - `data/raw/SPY.csv`：SPY 本地缓存
 - `data/raw/trump_speeches.csv`：特朗普发言数据
+- `data/raw/news.csv`：GDELT 等公开新闻标题/消息源数据
 - `data/processed/model_dataset.csv`：建模用数据
 - `outputs/signals.csv`：每日预测概率和信号
 - `outputs/metrics.json`：回测指标
