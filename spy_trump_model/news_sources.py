@@ -14,6 +14,11 @@ from .scrape import HEADERS
 GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 DEFAULT_MAX_ARTICLE_FETCHES = 50
 UNLIMITED_ARTICLE_FETCHES = -1
+DEFAULT_GDELT_CHUNK_DAYS = 14
+DEFAULT_GDELT_SLEEP_SECONDS = 3.0
+DEFAULT_GDELT_RETRY_ATTEMPTS = 4
+DEFAULT_GDELT_RETRY_BACKOFF_SECONDS = 20.0
+RETRYABLE_GDELT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 DEFAULT_GDELT_QUERIES = {
     "trump_market": '"Donald Trump" (stock OR stocks OR market OR "Wall Street" OR Nasdaq OR "S&P")',
@@ -162,12 +167,29 @@ def _article_fetch_allowed(fetch_article_text: bool, max_article_fetches: int, f
     return fetched < max(max_article_fetches, 0)
 
 
+def _retry_after_seconds(response: requests.Response, fallback_seconds: float) -> float:
+    header = response.headers.get("Retry-After") if hasattr(response, "headers") else None
+    if header:
+        try:
+            return max(float(header), 0.0)
+        except ValueError:
+            retry_at = pd.to_datetime(header, errors="coerce", utc=True)
+            if pd.notna(retry_at):
+                now = pd.Timestamp.utcnow()
+                if now.tzinfo is None:
+                    now = now.tz_localize("UTC")
+                return max((retry_at - now).total_seconds(), 0.0)
+    return max(float(fallback_seconds), 0.0)
+
+
 def _fetch_gdelt_chunk(
     query: str,
     start: pd.Timestamp,
     end: pd.Timestamp,
     max_records: int,
     sort: str,
+    retry_attempts: int = DEFAULT_GDELT_RETRY_ATTEMPTS,
+    retry_backoff_seconds: float = DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
 ) -> list[dict[str, object]]:
     params = {
         "query": f"{query} sourcelang:english",
@@ -178,11 +200,34 @@ def _fetch_gdelt_chunk(
         "startdatetime": _gdelt_datetime(start),
         "enddatetime": _gdelt_datetime(end, end_of_day=True),
     }
-    response = requests.get(GDELT_DOC_API, params=params, headers=HEADERS, timeout=60)
-    response.raise_for_status()
-    payload = response.json()
-    articles = payload.get("articles", []) if isinstance(payload, dict) else []
-    return articles if isinstance(articles, list) else []
+    attempts = max(int(retry_attempts), 0) + 1
+    for attempt in range(attempts):
+        try:
+            response = requests.get(GDELT_DOC_API, params=params, headers=HEADERS, timeout=60)
+        except requests.RequestException as exc:
+            if attempt + 1 >= attempts:
+                raise
+            delay = max(float(retry_backoff_seconds), 0.0) * (2**attempt)
+            print(f"GDELT request retry {attempt + 1}/{attempts - 1} after error: {exc}; sleeping {delay:.1f}s")
+            time.sleep(delay)
+            continue
+
+        status_code = int(getattr(response, "status_code", 200) or 200)
+        if status_code in RETRYABLE_GDELT_STATUS_CODES and attempt + 1 < attempts:
+            fallback = max(float(retry_backoff_seconds), 0.0) * (2**attempt)
+            delay = _retry_after_seconds(response, fallback)
+            print(
+                f"GDELT request retry {attempt + 1}/{attempts - 1} after HTTP {status_code}; "
+                f"sleeping {delay:.1f}s"
+            )
+            time.sleep(delay)
+            continue
+
+        response.raise_for_status()
+        payload = response.json()
+        articles = payload.get("articles", []) if isinstance(payload, dict) else []
+        return articles if isinstance(articles, list) else []
+    return []
 
 
 def fetch_gdelt_news(
@@ -190,15 +235,17 @@ def fetch_gdelt_news(
     start_date: str | None = None,
     end_date: str | None = None,
     queries: dict[str, str] | None = None,
-    chunk_days: int = 7,
+    chunk_days: int = DEFAULT_GDELT_CHUNK_DAYS,
     max_records: int = 100,
     sort: str = "datedesc",
     fetch_article_text: bool = False,
     article_timeout: int = 20,
     max_article_chars: int = 12000,
     max_article_fetches: int = DEFAULT_MAX_ARTICLE_FETCHES,
-    sleep_seconds: float = 1.0,
+    sleep_seconds: float = DEFAULT_GDELT_SLEEP_SECONDS,
     article_sleep_seconds: float = 1.5,
+    gdelt_retry_attempts: int = DEFAULT_GDELT_RETRY_ATTEMPTS,
+    gdelt_retry_backoff_seconds: float = DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
     existing = _read_existing_news(path)
@@ -224,6 +271,8 @@ def fetch_gdelt_news(
                     end=end,
                     max_records=max_records,
                     sort=sort,
+                    retry_attempts=gdelt_retry_attempts,
+                    retry_backoff_seconds=gdelt_retry_backoff_seconds,
                 )
             except requests.RequestException as exc:
                 print(f"Skipped GDELT {label} {start.date()}->{end.date()}: {exc}")

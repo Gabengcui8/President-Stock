@@ -13,7 +13,15 @@ from .keyword_impact import (
     keyword_impact_report,
 )
 from .model import compare_assets, train_and_backtest
-from .news_sources import DEFAULT_MAX_ARTICLE_FETCHES, fetch_gdelt_news, parse_gdelt_query_args
+from .news_sources import (
+    DEFAULT_GDELT_CHUNK_DAYS,
+    DEFAULT_GDELT_RETRY_ATTEMPTS,
+    DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
+    DEFAULT_GDELT_SLEEP_SECONDS,
+    DEFAULT_MAX_ARTICLE_FETCHES,
+    fetch_gdelt_news,
+    parse_gdelt_query_args,
+)
 from .paper_ledger import DEFAULT_PAPER_HORIZONS, DEFAULT_PAPER_TICKERS, build_paper_ledger
 from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
 from .signal_expansion import DEFAULT_MARKET_TICKERS, DEFAULT_TEXT_VECTOR_FEATURES, build_expanded_signals
@@ -59,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     gdelt.add_argument("--out", default="data/raw/news.csv")
     gdelt.add_argument("--start-date", default=None)
     gdelt.add_argument("--end-date", default=None)
-    gdelt.add_argument("--chunk-days", type=int, default=7)
+    gdelt.add_argument("--chunk-days", type=int, default=DEFAULT_GDELT_CHUNK_DAYS)
     gdelt.add_argument("--max-records", type=int, default=100)
     gdelt.add_argument("--sort", default="datedesc")
     gdelt.add_argument("--fetch-article-text", action="store_true")
@@ -71,8 +79,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_ARTICLE_FETCHES,
         help="Maximum article URLs to fetch for body text; use -1 for unlimited.",
     )
-    gdelt.add_argument("--sleep-seconds", type=float, default=1.0)
+    gdelt.add_argument("--sleep-seconds", type=float, default=DEFAULT_GDELT_SLEEP_SECONDS)
     gdelt.add_argument("--article-sleep-seconds", type=float, default=1.5)
+    gdelt.add_argument(
+        "--gdelt-retry-attempts",
+        type=int,
+        default=DEFAULT_GDELT_RETRY_ATTEMPTS,
+        help="Retries for GDELT API rate limits or transient server errors.",
+    )
+    gdelt.add_argument(
+        "--gdelt-retry-backoff-seconds",
+        type=float,
+        default=DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
+        help="Initial wait before retrying GDELT API requests; doubles after each retry.",
+    )
     gdelt.add_argument(
         "--query",
         action="append",
@@ -233,6 +253,8 @@ def main() -> None:
             max_article_fetches=args.max_article_fetches,
             sleep_seconds=args.sleep_seconds,
             article_sleep_seconds=args.article_sleep_seconds,
+            gdelt_retry_attempts=args.gdelt_retry_attempts,
+            gdelt_retry_backoff_seconds=args.gdelt_retry_backoff_seconds,
         )
     elif args.command == "train":
         train_and_backtest(

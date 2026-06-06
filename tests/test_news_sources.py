@@ -1,15 +1,27 @@
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 from spy_trump_model.news_sources import fetch_gdelt_news, parse_gdelt_query_args
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(
+        self,
+        payload: dict[str, object],
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self._payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            error = requests.HTTPError(f"{self.status_code} Client Error")
+            error.response = self
+            raise error
         return None
 
     def json(self) -> dict[str, object]:
@@ -88,6 +100,50 @@ def test_fetch_gdelt_news_writes_expansion_ready_csv(tmp_path: Path, monkeypatch
     reloaded = pd.read_csv(out_path)
     assert len(reloaded) == 2
     assert reloaded["source"].is_unique
+
+
+def test_fetch_gdelt_news_retries_rate_limited_api_chunk(tmp_path: Path, monkeypatch) -> None:
+    out_path = tmp_path / "news.csv"
+    calls = 0
+    sleeps: list[float] = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _FakeResponse({}, status_code=429, headers={"Retry-After": "0"})
+        return _FakeResponse(
+            {
+                "articles": [
+                    {
+                        "url": "https://example.com/markets/trump-retry",
+                        "title": "Markets recover after delayed Trump news fetch",
+                        "seendate": "20240102T143000Z",
+                        "domain": "example.com",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("spy_trump_model.news_sources.requests.get", fake_get)
+    monkeypatch.setattr("spy_trump_model.news_sources.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    fetched = fetch_gdelt_news(
+        out_path=out_path,
+        start_date="2024-01-01",
+        end_date="2024-01-03",
+        queries={"market": '"Donald Trump" stock market'},
+        chunk_days=3,
+        fetch_article_text=False,
+        sleep_seconds=0,
+        gdelt_retry_attempts=2,
+        gdelt_retry_backoff_seconds=0,
+    )
+
+    assert calls == 2
+    assert sleeps == [0.0, 0.0]
+    assert len(fetched) == 1
+    assert fetched.iloc[0]["source"] == "https://example.com/markets/trump-retry"
 
 
 def test_parse_gdelt_query_args_accepts_labels_and_raw_queries() -> None:
