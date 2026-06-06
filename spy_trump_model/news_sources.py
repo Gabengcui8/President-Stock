@@ -21,6 +21,7 @@ DEFAULT_GDELT_RETRY_ATTEMPTS = 4
 DEFAULT_GDELT_RETRY_BACKOFF_SECONDS = 20.0
 RETRYABLE_GDELT_STATUS_CODES = {429, 500, 502, 503, 504}
 DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT = 1
+DEFAULT_ARTICLE_MAX_AGE_DAYS = 30
 ARTICLE_DOMAIN_BLOCK_STATUS_CODES = {401, 403, 404, 410, 429, 451}
 
 DEFAULT_GDELT_QUERIES = {
@@ -187,6 +188,17 @@ def _article_fetch_allowed(fetch_article_text: bool, max_article_fetches: int, f
     return fetched < max(max_article_fetches, 0)
 
 
+def _article_recent_enough(article: dict[str, object], max_age_days: int) -> bool:
+    if max_age_days < 0:
+        return True
+    seen_date = _parse_seen_date(article.get("seendate"))
+    if seen_date is None:
+        return False
+    now = pd.Timestamp.now(tz="UTC")
+    age_days = (now - seen_date).total_seconds() / 86400
+    return age_days <= max(float(max_age_days), 0.0)
+
+
 def _retry_after_seconds(response: requests.Response, fallback_seconds: float) -> float:
     header = response.headers.get("Retry-After") if hasattr(response, "headers") else None
     if header:
@@ -195,9 +207,7 @@ def _retry_after_seconds(response: requests.Response, fallback_seconds: float) -
         except ValueError:
             retry_at = pd.to_datetime(header, errors="coerce", utc=True)
             if pd.notna(retry_at):
-                now = pd.Timestamp.utcnow()
-                if now.tzinfo is None:
-                    now = now.tz_localize("UTC")
+                now = pd.Timestamp.now(tz="UTC")
                 return max((retry_at - now).total_seconds(), 0.0)
     return max(float(fallback_seconds), 0.0)
 
@@ -267,6 +277,7 @@ def fetch_gdelt_news(
     gdelt_retry_attempts: int = DEFAULT_GDELT_RETRY_ATTEMPTS,
     gdelt_retry_backoff_seconds: float = DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
     article_domain_failure_limit: int = DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT,
+    article_max_age_days: int = DEFAULT_ARTICLE_MAX_AGE_DAYS,
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
     existing = _read_existing_news(path)
@@ -282,6 +293,7 @@ def fetch_gdelt_news(
     scanned = 0
     article_fetches = 0
     article_domain_skips = 0
+    article_age_skips = 0
     blocked_article_domains: set[str] = set()
     article_domain_failures: dict[str, int] = {}
 
@@ -310,13 +322,16 @@ def fetch_gdelt_news(
                     continue
                 article_domain = _article_domain(article)
                 domain_blocked = bool(article_domain) and article_domain in blocked_article_domains
+                article_too_old = not _article_recent_enough(article, int(article_max_age_days))
                 should_fetch_article = _article_fetch_allowed(
                     fetch_article_text=fetch_article_text,
                     max_article_fetches=max_article_fetches,
                     fetched=article_fetches,
-                ) and not domain_blocked
+                ) and not domain_blocked and not article_too_old
                 if domain_blocked:
                     article_domain_skips += 1
+                if article_too_old and fetch_article_text:
+                    article_age_skips += 1
                 row, attempted_article_fetch, failed_domain = _article_to_row(
                     article,
                     source_type=source_type,
@@ -353,6 +368,7 @@ def fetch_gdelt_news(
     print(
         f"Saved GDELT news: {path} ({len(combined)} rows, +{len(rows)} new, "
         f"{scanned} articles scanned, {article_fetches} article URLs fetched, "
-        f"{article_domain_skips} blocked-domain article fetches skipped)"
+        f"{article_domain_skips} blocked-domain article fetches skipped, "
+        f"{article_age_skips} old article fetches skipped)"
     )
     return combined

@@ -86,6 +86,7 @@ def test_fetch_gdelt_news_writes_expansion_ready_csv(tmp_path: Path, monkeypatch
         max_records=50,
         fetch_article_text=True,
         max_article_fetches=1,
+        article_max_age_days=-1,
         article_sleep_seconds=0,
         sleep_seconds=0,
     )
@@ -199,6 +200,7 @@ def test_fetch_gdelt_news_skips_article_domain_after_blocked_body_fetch(
         chunk_days=4,
         fetch_article_text=True,
         max_article_fetches=10,
+        article_max_age_days=-1,
         article_sleep_seconds=0,
         sleep_seconds=0,
         article_domain_failure_limit=1,
@@ -211,6 +213,47 @@ def test_fetch_gdelt_news_skips_article_domain_after_blocked_body_fetch(
     assert len(fetched) == 3
     assert fetched["text"].str.contains("Fetched open article body").sum() == 1
     assert fetched["text"].str.contains("Second blocked article skips body fetch").sum() == 1
+
+
+def test_fetch_gdelt_news_skips_old_article_body_urls(tmp_path: Path, monkeypatch) -> None:
+    out_path = tmp_path / "news.csv"
+    article_calls: list[str] = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "api.gdeltproject.org" in url:
+            return _FakeResponse(
+                {
+                    "articles": [
+                        {
+                            "url": "https://expired.example/news/old",
+                            "title": "Old article URL should not be visited",
+                            "seendate": "20200102T143000Z",
+                            "domain": "expired.example",
+                        }
+                    ]
+                }
+            )
+        article_calls.append(url)
+        return _FakeResponse({"html": "<html><article><p>Unexpected body.</p></article></html>"})
+
+    monkeypatch.setattr("spy_trump_model.news_sources.requests.get", fake_get)
+
+    fetched = fetch_gdelt_news(
+        out_path=out_path,
+        start_date="2020-01-01",
+        end_date="2020-01-03",
+        queries={"market": '"Donald Trump" stock market'},
+        chunk_days=3,
+        fetch_article_text=True,
+        max_article_fetches=10,
+        article_max_age_days=30,
+        article_sleep_seconds=0,
+        sleep_seconds=0,
+    )
+
+    assert article_calls == []
+    assert len(fetched) == 1
+    assert fetched.iloc[0]["text"] == "Old article URL should not be visited. expired.example"
 
 
 def test_parse_gdelt_query_args_accepts_labels_and_raw_queries() -> None:

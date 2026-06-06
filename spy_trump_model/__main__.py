@@ -15,6 +15,7 @@ from .keyword_impact import (
 from .model import compare_assets, train_and_backtest
 from .news_sources import (
     DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT,
+    DEFAULT_ARTICLE_MAX_AGE_DAYS,
     DEFAULT_GDELT_CHUNK_DAYS,
     DEFAULT_GDELT_RETRY_ATTEMPTS,
     DEFAULT_GDELT_RETRY_BACKOFF_SECONDS,
@@ -87,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_ARTICLE_DOMAIN_FAILURE_LIMIT,
         help="Body fetch failures before skipping that article domain for this run; use -1 to disable.",
+    )
+    gdelt.add_argument(
+        "--article-max-age-days",
+        type=int,
+        default=DEFAULT_ARTICLE_MAX_AGE_DAYS,
+        help="Only fetch article body URLs this many days after publication; use -1 to disable.",
     )
     gdelt.add_argument(
         "--gdelt-retry-attempts",
@@ -263,6 +270,7 @@ def main() -> None:
             gdelt_retry_attempts=args.gdelt_retry_attempts,
             gdelt_retry_backoff_seconds=args.gdelt_retry_backoff_seconds,
             article_domain_failure_limit=args.article_domain_failure_limit,
+            article_max_age_days=args.article_max_age_days,
         )
     elif args.command == "train":
         train_and_backtest(
