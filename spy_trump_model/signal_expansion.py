@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.feature_extraction.text import HashingVectorizer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from .data import download_spy, ensure_parent
@@ -96,6 +97,7 @@ THEME_TERMS = {
 }
 
 DEFAULT_MARKET_TICKERS = ["SPY", "QQQ", "GLD", "TLT", "USO", "UUP", "^VIX", "^TNX"]
+DEFAULT_TEXT_VECTOR_FEATURES = 128
 MARKET_TICKER_ALIASES = {
     "SPY": "spy",
     "QQQ": "qqq",
@@ -243,6 +245,34 @@ def _daily_text_signals(texts: pd.DataFrame) -> pd.DataFrame:
     return daily.sort_values("date").reset_index(drop=True)
 
 
+def _daily_whole_text_vectors(texts: pd.DataFrame, n_features: int) -> pd.DataFrame:
+    if texts.empty:
+        return pd.DataFrame(columns=["date"])
+    if n_features <= 0:
+        raise ValueError("text vector feature count must be positive.")
+
+    daily_text = (
+        texts.groupby("date", as_index=False)["combined_text"]
+        .agg(lambda values: "\n\n".join(str(value) for value in values if str(value).strip()))
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    vectorizer = HashingVectorizer(
+        n_features=int(n_features),
+        analyzer="word",
+        ngram_range=(1, 2),
+        lowercase=True,
+        stop_words="english",
+        norm="l2",
+        alternate_sign=False,
+    )
+    matrix = vectorizer.transform(daily_text["combined_text"].fillna(""))
+    vector_cols = [f"whole_text_vec_{index:03d}" for index in range(int(n_features))]
+    vectors = pd.DataFrame(matrix.toarray(), columns=vector_cols)
+    vectors.insert(0, "date", daily_text["date"])
+    return vectors
+
+
 def _read_market_cache(
     ticker: str,
     data_dir: str | Path,
@@ -306,10 +336,15 @@ def build_expanded_signals(
     start: str = "2021-01-01",
     market_tickers: list[str] | None = None,
     include_market_state: bool = True,
+    include_text_vectors: bool = True,
+    text_vector_features: int = DEFAULT_TEXT_VECTOR_FEATURES,
     update: bool = False,
 ) -> pd.DataFrame:
     texts = load_text_sources(text_paths)
     text_signals = _daily_text_signals(texts)
+    if include_text_vectors:
+        text_vectors = _daily_whole_text_vectors(texts, n_features=text_vector_features)
+        text_signals = text_signals.merge(text_vectors, on="date", how="outer")
     if start:
         text_signals = text_signals[text_signals["date"] >= pd.Timestamp(start)].copy()
 
@@ -323,7 +358,7 @@ def build_expanded_signals(
     text_cols = [
         col
         for col in expanded.columns
-        if col.startswith(("text_", "word_", "char_", "source_", "theme_", "sentiment_"))
+        if col.startswith(("text_", "word_", "char_", "source_", "theme_", "sentiment_", "whole_text_vec_"))
     ]
     if text_cols:
         zero_fill_cols = [col for col in text_cols if not col.endswith("_sentiment")]

@@ -44,18 +44,22 @@ def test_signal_expansion_builds_continuous_theme_features(tmp_path: Path) -> No
         out_path=out_path,
         start="2024-01-01",
         include_market_state=False,
+        text_vector_features=16,
     )
 
     assert out_path.exists()
     assert "theme_trade_china_intensity" in expanded.columns
     assert "theme_rates_inflation_intensity" in expanded.columns
     assert "theme_trade_china_sentiment" in expanded.columns
+    assert "whole_text_vec_000" in expanded.columns
+    assert "whole_text_vec_015" in expanded.columns
     assert "source_truth_count" in expanded.columns
     assert "source_news_count" in expanded.columns
 
     jan2 = expanded.loc[expanded["date"] == pd.Timestamp("2024-01-02")].iloc[0]
     jan3 = expanded.loc[expanded["date"] == pd.Timestamp("2024-01-03")].iloc[0]
     assert jan2["theme_trade_china_mentions"] > 0
+    assert jan2.filter(like="whole_text_vec_").sum() > 0
     assert jan2["source_truth_count"] == 1
     assert jan2["source_news_count"] == 1
     assert jan3["theme_rates_inflation_mentions"] > 0

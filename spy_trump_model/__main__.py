@@ -16,7 +16,7 @@ from .model import compare_assets, train_and_backtest
 from .news_sources import fetch_gdelt_news, parse_gdelt_query_args
 from .paper_ledger import DEFAULT_PAPER_HORIZONS, DEFAULT_PAPER_TICKERS, build_paper_ledger
 from .scrape import fetch_trumpstruth_feed, fetch_truthsocial_posts, fetch_whitehouse_remarks
-from .signal_expansion import DEFAULT_MARKET_TICKERS, build_expanded_signals
+from .signal_expansion import DEFAULT_MARKET_TICKERS, DEFAULT_TEXT_VECTOR_FEATURES, build_expanded_signals
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,7 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     gdelt.add_argument("--chunk-days", type=int, default=7)
     gdelt.add_argument("--max-records", type=int, default=100)
     gdelt.add_argument("--sort", default="datedesc")
+    gdelt.add_argument("--fetch-article-text", action="store_true")
+    gdelt.add_argument("--article-timeout", type=int, default=20)
+    gdelt.add_argument("--max-article-chars", type=int, default=12000)
     gdelt.add_argument("--sleep-seconds", type=float, default=1.0)
+    gdelt.add_argument("--article-sleep-seconds", type=float, default=0.2)
     gdelt.add_argument(
         "--query",
         action="append",
@@ -151,6 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
     expansion.add_argument("--start", default="2021-01-01")
     expansion.add_argument("--market-tickers", nargs="+", default=DEFAULT_MARKET_TICKERS)
     expansion.add_argument("--no-market-state", action="store_true")
+    expansion.add_argument("--no-text-vectors", action="store_true")
+    expansion.add_argument("--text-vector-features", type=int, default=DEFAULT_TEXT_VECTOR_FEATURES)
     expansion.add_argument("--update", action="store_true")
 
     paper = sub.add_parser(
@@ -215,7 +221,11 @@ def main() -> None:
             chunk_days=args.chunk_days,
             max_records=args.max_records,
             sort=args.sort,
+            fetch_article_text=args.fetch_article_text,
+            article_timeout=args.article_timeout,
+            max_article_chars=args.max_article_chars,
             sleep_seconds=args.sleep_seconds,
+            article_sleep_seconds=args.article_sleep_seconds,
         )
     elif args.command == "train":
         train_and_backtest(
@@ -271,6 +281,8 @@ def main() -> None:
             start=args.start,
             market_tickers=args.market_tickers,
             include_market_state=not args.no_market_state,
+            include_text_vectors=not args.no_text_vectors,
+            text_vector_features=args.text_vector_features,
             update=args.update,
         )
     elif args.command == "paper-ledger":

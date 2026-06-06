@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 
 from .data import ensure_parent
 from .scrape import HEADERS
@@ -83,7 +84,37 @@ def _parse_seen_date(value: object) -> pd.Timestamp | None:
     return parsed
 
 
-def _article_to_row(article: dict[str, object], source_type: str) -> dict[str, str] | None:
+def _clean_article_text(value: str) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _extract_article_body(url: str, timeout: int = 20, max_chars: int = 12000) -> str:
+    response = requests.get(url, headers=HEADERS, timeout=timeout)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "lxml")
+    for tag in soup(["script", "style", "noscript", "svg", "form", "nav", "footer", "header"]):
+        tag.decompose()
+
+    body = soup.find("article") or soup.find("main") or soup.body
+    if body is None:
+        return ""
+
+    paragraphs = [p.get_text(" ", strip=True) for p in body.find_all("p")]
+    if not paragraphs:
+        paragraphs = [body.get_text(" ", strip=True)]
+    text = _clean_article_text(" ".join(part for part in paragraphs if part))
+    if max_chars > 0:
+        text = text[:max_chars]
+    return text
+
+
+def _article_to_row(
+    article: dict[str, object],
+    source_type: str,
+    fetch_article_text: bool = False,
+    article_timeout: int = 20,
+    max_article_chars: int = 12000,
+) -> dict[str, str] | None:
     url = str(article.get("url") or "").strip()
     title = str(article.get("title") or "").strip()
     seen_date = _parse_seen_date(article.get("seendate"))
@@ -91,7 +122,21 @@ def _article_to_row(article: dict[str, object], source_type: str) -> dict[str, s
         return None
 
     domain = str(article.get("domain") or "").strip()
-    text_parts = [title]
+    text_parts: list[str] = []
+    article_body = ""
+    if fetch_article_text:
+        try:
+            article_body = _extract_article_body(
+                url,
+                timeout=article_timeout,
+                max_chars=max_article_chars,
+            )
+        except requests.RequestException as exc:
+            print(f"Article text fallback for {url}: {exc}")
+    if article_body:
+        text_parts.append(article_body)
+    else:
+        text_parts.append(title)
     if domain:
         text_parts.append(domain)
 
@@ -136,7 +181,11 @@ def fetch_gdelt_news(
     chunk_days: int = 7,
     max_records: int = 100,
     sort: str = "datedesc",
+    fetch_article_text: bool = False,
+    article_timeout: int = 20,
+    max_article_chars: int = 12000,
     sleep_seconds: float = 1.0,
+    article_sleep_seconds: float = 0.2,
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
     existing = _read_existing_news(path)
@@ -169,11 +218,19 @@ def fetch_gdelt_news(
             for article in articles:
                 if not isinstance(article, dict):
                     continue
-                row = _article_to_row(article, source_type=source_type)
+                row = _article_to_row(
+                    article,
+                    source_type=source_type,
+                    fetch_article_text=fetch_article_text,
+                    article_timeout=article_timeout,
+                    max_article_chars=max_article_chars,
+                )
                 if row is None or row["source"] in existing_sources:
                     continue
                 rows.append(row)
                 existing_sources.add(row["source"])
+                if fetch_article_text:
+                    time.sleep(max(float(article_sleep_seconds), 0.0))
             time.sleep(max(float(sleep_seconds), 0.0))
 
     if rows:
