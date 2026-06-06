@@ -12,6 +12,8 @@ from .scrape import HEADERS
 
 
 GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
+DEFAULT_MAX_ARTICLE_FETCHES = 50
+UNLIMITED_ARTICLE_FETCHES = -1
 
 DEFAULT_GDELT_QUERIES = {
     "trump_market": '"Donald Trump" (stock OR stocks OR market OR "Wall Street" OR Nasdaq OR "S&P")',
@@ -114,17 +116,19 @@ def _article_to_row(
     fetch_article_text: bool = False,
     article_timeout: int = 20,
     max_article_chars: int = 12000,
-) -> dict[str, str] | None:
+) -> tuple[dict[str, str] | None, bool]:
     url = str(article.get("url") or "").strip()
     title = str(article.get("title") or "").strip()
     seen_date = _parse_seen_date(article.get("seendate"))
     if not url or not title or seen_date is None:
-        return None
+        return None, False
 
     domain = str(article.get("domain") or "").strip()
     text_parts: list[str] = []
     article_body = ""
+    fetched_article_text = False
     if fetch_article_text:
+        fetched_article_text = True
         try:
             article_body = _extract_article_body(
                 url,
@@ -147,7 +151,15 @@ def _article_to_row(
         "source": url,
         "source_type": source_type,
         "text": ". ".join(text_parts),
-    }
+    }, fetched_article_text
+
+
+def _article_fetch_allowed(fetch_article_text: bool, max_article_fetches: int, fetched: int) -> bool:
+    if not fetch_article_text:
+        return False
+    if max_article_fetches == UNLIMITED_ARTICLE_FETCHES:
+        return True
+    return fetched < max(max_article_fetches, 0)
 
 
 def _fetch_gdelt_chunk(
@@ -184,8 +196,9 @@ def fetch_gdelt_news(
     fetch_article_text: bool = False,
     article_timeout: int = 20,
     max_article_chars: int = 12000,
+    max_article_fetches: int = DEFAULT_MAX_ARTICLE_FETCHES,
     sleep_seconds: float = 1.0,
-    article_sleep_seconds: float = 0.2,
+    article_sleep_seconds: float = 1.5,
 ) -> pd.DataFrame:
     path = ensure_parent(out_path)
     existing = _read_existing_news(path)
@@ -199,6 +212,7 @@ def fetch_gdelt_news(
     selected_queries = queries or DEFAULT_GDELT_QUERIES
     rows: list[dict[str, str]] = []
     scanned = 0
+    article_fetches = 0
 
     for label, query in selected_queries.items():
         source_type = f"gdelt_{label}".lower().replace("-", "_")
@@ -218,18 +232,25 @@ def fetch_gdelt_news(
             for article in articles:
                 if not isinstance(article, dict):
                     continue
-                row = _article_to_row(
+                should_fetch_article = _article_fetch_allowed(
+                    fetch_article_text=fetch_article_text,
+                    max_article_fetches=max_article_fetches,
+                    fetched=article_fetches,
+                )
+                row, attempted_article_fetch = _article_to_row(
                     article,
                     source_type=source_type,
-                    fetch_article_text=fetch_article_text,
+                    fetch_article_text=should_fetch_article,
                     article_timeout=article_timeout,
                     max_article_chars=max_article_chars,
                 )
+                if attempted_article_fetch:
+                    article_fetches += 1
                 if row is None or row["source"] in existing_sources:
                     continue
                 rows.append(row)
                 existing_sources.add(row["source"])
-                if fetch_article_text:
+                if attempted_article_fetch:
                     time.sleep(max(float(article_sleep_seconds), 0.0))
             time.sleep(max(float(sleep_seconds), 0.0))
 
@@ -245,5 +266,8 @@ def fetch_gdelt_news(
         combined = combined.sort_values(["date", "source_type", "source"]).reset_index(drop=True)
 
     combined.to_csv(path, index=False)
-    print(f"Saved GDELT news: {path} ({len(combined)} rows, +{len(rows)} new, {scanned} articles scanned)")
+    print(
+        f"Saved GDELT news: {path} ({len(combined)} rows, +{len(rows)} new, "
+        f"{scanned} articles scanned, {article_fetches} article URLs fetched)"
+    )
     return combined

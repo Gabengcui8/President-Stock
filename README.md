@@ -39,10 +39,10 @@ python -m spy_trump_model fetch-trumpstruth --start-date 2022-02-01
 
 # 拓宽文本源：抓公开新闻，并尽量抓取整篇正文；默认覆盖 Trump、市场、关税、中国、通胀、能源等主题
 # 默认抓最近约 90 天；可以用 --start-date/--end-date 指定日期范围，实际覆盖以 GDELT 返回为准
-python -m spy_trump_model fetch-gdelt-news --out data/raw/news.csv --max-records 100 --fetch-article-text
+python -m spy_trump_model fetch-gdelt-news --out data/raw/news.csv --max-records 100 --fetch-article-text --max-article-fetches 50 --article-sleep-seconds 2
 
 # 可选：自定义新闻查询；label=query 可以重复传
-python -m spy_trump_model fetch-gdelt-news --out data/raw/news.csv --fetch-article-text --query 'tariffs="Donald Trump" tariffs' --query 'oil="Donald Trump" oil energy'
+python -m spy_trump_model fetch-gdelt-news --out data/raw/news.csv --fetch-article-text --max-article-fetches 30 --query 'tariffs="Donald Trump" tariffs' --query 'oil="Donald Trump" oil energy'
 
 # 可选：直接抓 @realDonaldTrump 的 Truth Social 公开接口
 # 如果云服务器 IP 被 Truth Social 拒绝，可能会返回 403
@@ -89,7 +89,7 @@ python -m spy_trump_model paper-ledger --signals data/processed/expanded_signals
 
 `signal-expansion` 用来解决离散关键词事件太少的问题。它接收一个或多个 CSV 文本源，格式同样建议使用 `date,datetime,title,source,source_type,text`。核心输出是 `whole_text_vec_*`：每天全部文章/帖子正文拼接后的整篇文本哈希向量，模型可以从完整文本的词组结构里学习，而不是只数关键词。`theme_*` 仍会保留，但只应作为解释和审计标签；同时还会输出情绪、来源计数、60 日 surprise，以及 SPY/QQQ/GLD/TLT/USO/UUP/VIX/TNX 等市场状态。这个表适合进入 paper trading 和后续模型，不应直接当实盘信号。
 
-`fetch-gdelt-news` 用来把 Trump 自己发言之外的公开新闻纳入文本源，默认查询 Trump+市场、Trump+贸易/中国、Trump+通胀/利率、Trump+能源、Trump+美元、Trump+地缘政治、Trump+税收监管、Trump+边境移民等组合。加 `--fetch-article-text` 后会逐条访问新闻 URL 并尽量抽取正文，失败时退回标题，不会让整批任务中断。它写入 `data/raw/news.csv`，之后用 `signal-expansion --texts data/raw/trump_speeches.csv data/raw/news.csv` 合并。注意，新闻正文是“市场如何报道/解读 Trump”的代理变量，不等于 Trump 本人发言，所以后面必须继续用 paper ledger 和样本外检验分开看。
+`fetch-gdelt-news` 用来把 Trump 自己发言之外的公开新闻纳入文本源，默认查询 Trump+市场、Trump+贸易/中国、Trump+通胀/利率、Trump+能源、Trump+美元、Trump+地缘政治、Trump+税收监管、Trump+边境移民等组合。加 `--fetch-article-text` 后会访问新闻 URL 并尽量抽取正文，失败时退回标题，不会让整批任务中断。为了避免访问过多 URL 被限流，默认最多抓 50 篇正文，可以用 `--max-article-fetches` 调整，`-1` 表示不限制。它写入 `data/raw/news.csv`，之后用 `signal-expansion --texts data/raw/trump_speeches.csv data/raw/news.csv` 合并。注意，新闻正文是“市场如何报道/解读 Trump”的代理变量，不等于 Trump 本人发言，所以后面必须继续用 paper ledger 和样本外检验分开看。
 
 `paper-ledger` 会从 `expanded_signals.csv` 生成前向观察账本，默认只保留 `text_item_count > 0` 的日期，并默认从下一交易日收盘开始计算 1/3/5 日 forward return，避免日级文本把盘后信息混进当天收盘。它的作用是记录和复盘，不是自动交易器；最新几天因为未来价格还没出现，forward return 会是空值。
 

@@ -19,14 +19,9 @@ class _FakeResponse:
 def test_fetch_gdelt_news_writes_expansion_ready_csv(tmp_path: Path, monkeypatch) -> None:
     out_path = tmp_path / "news.csv"
     calls: list[dict[str, object]] = []
+    article_calls: list[str] = []
 
     def fake_get(url, params=None, headers=None, timeout=None):
-        if "api.gdeltproject.org" not in url:
-            return _FakeResponse(
-                {
-                    "html": "<html><article><p>Full article discusses tariffs, bonds, and stocks.</p></article></html>"
-                }
-            )
         calls.append(dict(params or {}))
         return _FakeResponse(
             {
@@ -56,6 +51,7 @@ def test_fetch_gdelt_news_writes_expansion_ready_csv(tmp_path: Path, monkeypatch
 
     def fake_get_with_article(url, params=None, headers=None, timeout=None):
         if "api.gdeltproject.org" not in url:
+            article_calls.append(url)
             return _ArticleResponse(
                 {
                     "html": "<html><article><p>Full article discusses tariffs, bonds, and stocks.</p></article></html>"
@@ -73,6 +69,7 @@ def test_fetch_gdelt_news_writes_expansion_ready_csv(tmp_path: Path, monkeypatch
         chunk_days=3,
         max_records=50,
         fetch_article_text=True,
+        max_article_fetches=1,
         article_sleep_seconds=0,
         sleep_seconds=0,
     )
@@ -85,7 +82,8 @@ def test_fetch_gdelt_news_writes_expansion_ready_csv(tmp_path: Path, monkeypatch
     assert set(["date", "datetime", "title", "source", "source_type", "text"]).issubset(fetched.columns)
     assert fetched["source_type"].eq("gdelt_market").all()
     assert fetched["text"].str.contains("example.com").all()
-    assert fetched["text"].str.contains("Full article discusses tariffs").all()
+    assert len(article_calls) == 1
+    assert fetched["text"].str.contains("Full article discusses tariffs").sum() == 1
 
     reloaded = pd.read_csv(out_path)
     assert len(reloaded) == 2
